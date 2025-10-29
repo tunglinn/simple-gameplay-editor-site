@@ -26,11 +26,13 @@
 
 <div class="controls">
   <button id="serveBtn" class="small">Mark Serve</button>
+  <button id="noPtBtn" class="small">Mark No Point</button>
   <button id="homePtBtn" class="small">Mark Home Point</button>
   <button id="awayPtBtn" class="small">Mark Away Point</button>
   <button id="prevBtn" class="small">Jump -5s</button>
   <button id="nextBtn" class="small">Jump +5s</button>
   <button id="exportJson" class="small">Export JSON</button>
+  <button id="importJson" class="small">Import JSON</button>
   <button id="clearBtn" class="small">Clear Marks</button>
   <label style="margin-left:auto">Label: <input id="labelInput" placeholder="optional label" /></label>
 </div>
@@ -44,10 +46,12 @@
 const fileInput = document.getElementById('videoFile');
 const video = document.getElementById('video');
 const serveBtn = document.getElementById('serveBtn');
+const noPtBtn = document.getElementById('noPtBtn');
 const homePtBtn = document.getElementById('homePtBtn');
 const awayPtBtn = document.getElementById('awayPtBtn');
 const marksList = document.getElementById('marksList');
 const exportBtn = document.getElementById('exportJson');
+const importBtn = document.getElementById('importJson');
 const clearBtn = document.getElementById('clearBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
@@ -92,7 +96,7 @@ function prettyTime(t){
 }
 
 function addMark(time, label=''){
-  const mark = { time: Number(time.toFixed(3)), label: label || null, at: new Date().toISOString() };
+  const mark = { time: Number(time * 1000), label: label || null };
   marks.push(mark);
   refreshMarks();
 }
@@ -143,6 +147,15 @@ serveBtn.onclick = ()=>{
   addMark(video.currentTime, label);
 };
 
+noPtBtn.onclick = ()=>{
+  if(!video.src){
+    alert('Please load a video file first.');
+    return;
+  }
+  const label = "No Point";
+  addMark(video.currentTime, label);
+};
+
 homePtBtn.onclick = ()=>{
   if(!video.src){
     alert('Please load a video file first.');
@@ -184,9 +197,39 @@ exportBtn.onclick = ()=>{
   URL.revokeObjectURL(url);
 };
 
+importBtn.onclick = ()=>{
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'application/json';
+  inp.onchange = async e=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if(!data.marks || typeof data.marks !== 'object'){
+        alert('Invalid JSON format.');
+        return;
+      }
+      marks = [];
+      for(const [timeStr, label] of Object.entries(data.marks)){
+        const t = parseFloat(timeStr);
+        if(!isNaN(t)) marks.push({time:t, label:label||""});
+      }
+      refreshMarks();
+      alert('Marks imported successfully.');
+    }catch(err){
+      alert('Failed to read JSON: ' + err);
+    }
+  };
+  inp.click();
+};
+
 // keyboard shortcut: M to mark
 document.addEventListener('keydown', (e)=>{
-  if(e.key.toLowerCase() === 'm') markBtn.click();
+  if(e.key.toLowerCase() === 's') serveBtn.click();
+  if(e.key.toLowerCase() === 'h') homePtBtn.click();
+  if(e.key.toLowerCase() === 'a') awayPtBtn.click();
 });
 
 // basic mobile compatibility note: some mobile browsers restrict autoplay; user must tap play.
