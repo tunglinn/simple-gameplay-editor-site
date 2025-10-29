@@ -54,9 +54,27 @@ let currentFileName = null;
 
 fileInput.addEventListener('change', (e)=>{
   const f = e.target.files && e.target.files[0];
-  if(!f) return;
+  if (!f) return;
   currentFileName = f.name;
-  // Load locally (no upload)
+
+  // Check browser support for the file type
+  const mime = f.type || '';
+  const isSupported = video.canPlayType(mime) !== '';
+
+  if (!isSupported) {
+    // Show friendly message
+    alert(
+      `⚠️ This browser can't play ${f.name}.\n\n` +
+      `Try converting it to MP4 (H.264 + AAC).\n\n` +
+      `Example using FFmpeg:\n\n` +
+      `ffmpeg -i "${f.name}" -c:v libx264 -c:a aac output.mp4`
+    );
+    video.removeAttribute('src'); // clear
+    video.load();
+    return;
+  }
+
+  // Otherwise, safe to load
   video.src = URL.createObjectURL(f);
   marks = [];
   refreshMarks();
