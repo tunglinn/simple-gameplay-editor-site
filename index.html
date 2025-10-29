@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Video Marker — Prototype</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;max-width:900px;margin:18px auto;padding:12px}
+  header{display:flex;gap:12px;align-items:center}
+  #video{width:100%;max-height:60vh;background:#000}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;background:#fff}
+  #marks{margin-top:12px}
+  .mark{display:flex;gap:8px;align-items:center;padding:6px;border:1px solid #eee;border-radius:6px;margin-bottom:6px}
+  .time{font-family:monospace;width:90px}
+  .small{font-size:0.9rem;padding:6px}
+</style>
+</head>
+<body>
+<header>
+  <h2>Video Marker — Prototype</h2>
+</header>
+
+<input id="videoFile" type="file" accept="video/*" />
+<video id="video" controls></video>
+
+<div class="controls">
+  <button id="markBtn" class="small">Mark Time</button>
+  <button id="prevBtn" class="small">Jump -5s</button>
+  <button id="nextBtn" class="small">Jump +5s</button>
+  <button id="exportJson" class="small">Export JSON</button>
+  <button id="clearBtn" class="small">Clear Marks</button>
+  <label style="margin-left:auto">Label: <input id="labelInput" placeholder="optional label" /></label>
+</div>
+
+<div id="marks">
+  <h3>Marks</h3>
+  <div id="marksList"></div>
+</div>
+
+<script>
+const fileInput = document.getElementById('videoFile');
+const video = document.getElementById('video');
+const markBtn = document.getElementById('markBtn');
+const marksList = document.getElementById('marksList');
+const exportBtn = document.getElementById('exportJson');
+const clearBtn = document.getElementById('clearBtn');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const labelInput = document.getElementById('labelInput');
+
+let marks = [];
+let currentFileName = null;
+
+fileInput.addEventListener('change', (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  currentFileName = f.name;
+  // Load locally (no upload)
+  video.src = URL.createObjectURL(f);
+  marks = [];
+  refreshMarks();
+});
+
+function prettyTime(t){
+  // mm:ss.s (one decimal)
+  const minutes = Math.floor(t / 60);
+  const seconds = (t % 60).toFixed(1).padStart(4,'0');
+  return `${minutes}:${seconds}`;
+}
+
+function addMark(time, label=''){
+  const mark = { time: Number(time.toFixed(3)), label: label || null, at: new Date().toISOString() };
+  marks.push(mark);
+  refreshMarks();
+}
+
+function refreshMarks(){
+  marksList.innerHTML = '';
+  marks.forEach((m, i)=>{
+    const div = document.createElement('div');
+    div.className = 'mark';
+    div.innerHTML = `
+      <div class="time">${prettyTime(m.time)}</div>
+      <div style="flex:1"><input data-idx="${i}" class="editLabel" value="${m.label||''}" style="width:100%"/></div>
+      <button data-idx="${i}" class="jump small">Jump</button>
+      <button data-idx="${i}" class="del small">Delete</button>
+    `;
+    marksList.appendChild(div);
+  });
+
+  // attach handlers
+  document.querySelectorAll('.jump').forEach(btn=>{
+    btn.onclick = e => {
+      const i = +btn.dataset.idx;
+      video.currentTime = marks[i].time;
+      video.play();
+    };
+  });
+  document.querySelectorAll('.del').forEach(btn=>{
+    btn.onclick = e => {
+      const i = +btn.dataset.idx;
+      marks.splice(i,1);
+      refreshMarks();
+    };
+  });
+  document.querySelectorAll('.editLabel').forEach(inp=>{
+    inp.onchange = e => {
+      const i = +inp.dataset.idx;
+      marks[i].label = inp.value || null;
+    };
+  });
+}
+
+markBtn.onclick = ()=>{
+  if(!video.src){
+    alert('Please load a video file first.');
+    return;
+  }
+  const label = labelInput.value.trim();
+  addMark(video.currentTime, label);
+};
+
+prevBtn.onclick = ()=> video.currentTime = Math.max(0, video.currentTime - 5);
+nextBtn.onclick = ()=> video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
+
+clearBtn.onclick = ()=>{
+  if(confirm('Clear all marks?')){ marks = []; refreshMarks(); }
+};
+
+exportBtn.onclick = ()=>{
+  const out = {
+    filename: currentFileName,
+    created: new Date().toISOString(),
+    duration: video.duration || null,
+    marks: marks
+  };
+  const blob = new Blob([JSON.stringify(out, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (currentFileName ? currentFileName.replace(/\.[^/.]+$/, '') : 'video') + '_marks.json';
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// keyboard shortcut: M to mark
+document.addEventListener('keydown', (e)=>{
+  if(e.key.toLowerCase() === 'm') markBtn.click();
+});
+
+// basic mobile compatibility note: some mobile browsers restrict autoplay; user must tap play.
+</script>
+</body>
+</html>
