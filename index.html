@@ -25,7 +25,9 @@
 <video id="video" controls></video>
 
 <div class="controls">
-  <button id="markBtn" class="small">Mark Time</button>
+  <button id="serveBtn" class="small">Mark Serve</button>
+  <button id="homePtBtn" class="small">Mark Home Point</button>
+  <button id="awayPtBtn" class="small">Mark Away Point</button>
   <button id="prevBtn" class="small">Jump -5s</button>
   <button id="nextBtn" class="small">Jump +5s</button>
   <button id="exportJson" class="small">Export JSON</button>
@@ -41,7 +43,9 @@
 <script>
 const fileInput = document.getElementById('videoFile');
 const video = document.getElementById('video');
-const markBtn = document.getElementById('markBtn');
+const serveBtn = document.getElementById('serveBtn');
+const homePtBtn = document.getElementById('homePtBtn');
+const awayPtBtn = document.getElementById('awayPtBtn');
 const marksList = document.getElementById('marksList');
 const exportBtn = document.getElementById('exportJson');
 const clearBtn = document.getElementById('clearBtn');
@@ -130,12 +134,30 @@ function refreshMarks(){
   });
 }
 
-markBtn.onclick = ()=>{
+serveBtn.onclick = ()=>{
   if(!video.src){
     alert('Please load a video file first.');
     return;
   }
-  const label = labelInput.value.trim();
+  const label = "Serve";
+  addMark(video.currentTime, label);
+};
+
+homePtBtn.onclick = ()=>{
+  if(!video.src){
+    alert('Please load a video file first.');
+    return;
+  }
+  const label = "Home Point";
+  addMark(video.currentTime, label);
+};
+
+awayPtBtn.onclick = ()=>{
+  if(!video.src){
+    alert('Please load a video file first.');
+    return;
+  }
+  const label = "Away Point";
   addMark(video.currentTime, label);
 };
 
