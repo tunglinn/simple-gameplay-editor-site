@@ -214,7 +214,7 @@ importBtn.onclick = ()=>{
       marks = [];
       for(const [timeStr, label] of Object.entries(data.marks)){
         const t = parseFloat(timeStr);
-        if(!isNaN(t)) marks.push({time:t, label:label||""});
+        if(!isNaN(t)) marks.push({time:t/1000, label:label||""});
       }
       refreshMarks();
       alert('Marks imported successfully.');
