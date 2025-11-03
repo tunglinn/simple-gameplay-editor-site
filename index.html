@@ -90,6 +90,7 @@ fileInput.addEventListener('change', (e)=>{
 
 function prettyTime(t){
   // mm:ss.s (one decimal)
+  t = t/1000
   const minutes = Math.floor(t / 60);
   const seconds = (t % 60).toFixed(1).padStart(4,'0');
   return `${minutes}:${seconds}`;
