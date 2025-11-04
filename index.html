@@ -120,7 +120,7 @@ function refreshMarks(){
   document.querySelectorAll('.jump').forEach(btn=>{
     btn.onclick = e => {
       const i = +btn.dataset.idx;
-      video.currentTime = marks[i].time;
+      video.currentTime = marks[i].time / 1000;
       video.play();
     };
   });
