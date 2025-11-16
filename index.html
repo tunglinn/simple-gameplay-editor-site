@@ -1,20 +1,10 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Video Marker — Prototype</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;max-width:900px;margin:18px auto;padding:12px}
-  header{display:flex;gap:12px;align-items:center}
-  #video{width:100%;max-height:60vh;background:#000}
-  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;background:#fff}
-  #marks{margin-top:12px}
-  .mark{display:flex;gap:8px;align-items:center;padding:6px;border:1px solid #eee;border-radius:6px;margin-bottom:6px}
-  .time{font-family:monospace;width:90px}
-  .small{font-size:0.9rem;padding:6px}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Video Marker — Prototype</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
@@ -22,7 +12,34 @@
 </header>
 
 <input id="videoFile" type="file" accept="video/*" />
-<video id="video" controls></video>
+<button id="importJson" class="small">Import JSON</button>
+<button id="fullScreenBtn" class="small">Enter Fullscreen</button>
+<button id="exportJson" class="small">Export JSON</button>
+<div id="videoContainer">
+  <video id="video" controls></video>
+  <div id="hideController">
+    <div class="controller-overlay" id="controllerOverlay">
+      <div class="utility-bg">
+        <button id="exitFullscreen" class="small">Exit</button>
+        <select id="markerDropdown">
+          <option value="default" selected hidden>Marker list</option>
+        </select>
+      </div>
+      <div class="controller-bg">
+          <div class="dpad">
+            <button class="btn left" data-action="left">◀</button>
+            <button class="btn right" data-action="right">▶</button>
+          </div>
+          <div class="cluster">
+            <button class="btn abxy-b" data-action="b">B</button>
+            <button class="btn abxy-y" data-action="y">Y</button>
+            <button class="btn abxy-x" data-action="x">X</button>
+            <button class="btn abxy-a" data-action="a">A</button>
+          </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="controls">
   <button id="serveBtn" class="small">Mark Serve</button>
@@ -31,8 +48,6 @@
   <button id="awayPtBtn" class="small">Mark Away Point</button>
   <button id="prevBtn" class="small">Jump -5s</button>
   <button id="nextBtn" class="small">Jump +5s</button>
-  <button id="exportJson" class="small">Export JSON</button>
-  <button id="importJson" class="small">Import JSON</button>
   <button id="clearBtn" class="small">Clear Marks</button>
   <label style="margin-left:auto">Label: <input id="labelInput" placeholder="optional label" /></label>
 </div>
@@ -56,6 +71,7 @@ const clearBtn = document.getElementById('clearBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const labelInput = document.getElementById('labelInput');
+const exitFullscreen = document.getElementById('exitFullscreen')
 
 let marks = [];
 let currentFileName = null;
@@ -100,6 +116,7 @@ function addMark(time, label=''){
   const mark = { time: Number(time * 1000), label: label || null };
   marks.push(mark);
   refreshMarks();
+  refreshDropdown(mark);
 }
 
 function refreshMarks(){
@@ -120,8 +137,7 @@ function refreshMarks(){
   document.querySelectorAll('.jump').forEach(btn=>{
     btn.onclick = e => {
       const i = +btn.dataset.idx;
-      video.currentTime = marks[i].time;
-      video.play();
+      video.currentTime = marks[i].time / 1000;
     };
   });
   document.querySelectorAll('.del').forEach(btn=>{
@@ -235,7 +251,99 @@ document.addEventListener('keydown', (e)=>{
   if(e.key.toLowerCase() === 'j') noPtBtn.click();
 });
 
+function refreshDropdown(selectedMarker) {
+  const select = document.getElementById("markerDropdown");
+  select.innerHTML = ""; // clear
+
+  marks.forEach(mark => {
+    const option = document.createElement("option");
+
+    // value should be the time
+    option.value = mark.time;
+
+    // If label is null, show just "(time)"
+    if (mark.label) {
+        option.textContent = `${mark.label} (${prettyTime(mark.time)})`;
+    } else {
+        option.textContent = `(${prettyTime(mark.time)})`;
+    }
+    
+    if (selectedMarker !== null && mark === selectedMarker) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  });
+}
+
+document.getElementById("markerDropdown").addEventListener("change", (e) => {
+    const time = e.target.value;
+    video.currentTime = time / 1000;
+});
+
+// === Fullscreen + controller overlay ===
+const hiddenLayer = document.getElementById('hideController');
+const overlay = document.getElementById('controllerOverlay');
+const container = document.getElementById('videoContainer');
+const fullScreen = document.getElementById('fullScreenBtn')
+
+// When video enters fullscreen, show overlay
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement === container) {
+    hiddenLayer.classList.add('visible');
+  } else {
+    hiddenLayer.classList.remove('visible');
+  }
+});
+
+// Make video request fullscreen when double-clicked
+fullScreen.onclick = () => {
+  const container = document.getElementById('videoContainer');
+  if (!document.fullscreenElement) container.requestFullscreen();
+  else document.exitFullscreen();
+};
+
+exitFullscreen.onclick = () => {
+  document.exitFullscreen()
+}
+
+// Dispatch custom "game-control" events for your own handlers
+function triggerControl(action){
+  video.dispatchEvent(new CustomEvent('game-control',{detail:{action}}));
+}
+
+// Button clicks
+overlay.querySelectorAll('.btn').forEach(btn=>{
+  btn.onclick = ()=>{
+    const action = btn.dataset.action;
+    triggerControl(action);
+  };
+});
+
+// Keyboard controls while fullscreen
+document.addEventListener('keydown',(e)=>{
+  if(!document.fullscreenElement) return;
+  const key = e.key.toLowerCase();
+  if(key==='arrowleft') triggerControl('left');
+  if(key==='arrowright') triggerControl('right');
+  if(['a','b','x','y'].includes(key)) triggerControl(key);
+});
+
+// Example: listen to game-control events (you can wire real actions)
+video.addEventListener('game-control',(e)=>{
+  const a = e.detail.action;
+  console.log('game-control:',a);
+  if(a==='left') prevBtn.click();
+  if(a==='right') nextBtn.click();
+  if(a==='a') serveBtn.click();
+  if(a==='b') noPtBtn.click();
+  if(a==='x') homePtBtn.click();
+  if(a==='y') awayPtBtn.click();
+});
+
+
+
 // basic mobile compatibility note: some mobile browsers restrict autoplay; user must tap play.
 </script>
+
 </body>
 </html>

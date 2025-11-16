@@ -1,0 +1,126 @@
+/* === Existing page styles (your code) === */
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;max-width:900px;margin:18px auto;padding:12px}
+header{display:flex;gap:12px;align-items:center}
+#video{width:100%;background:#000}
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;background:#fff}
+#marks{margin-top:12px}
+.mark{display:flex;gap:8px;align-items:center;padding:6px;border:1px solid #eee;border-radius:6px;margin-bottom:6px}
+.time{font-family:monospace;width:90px}
+.small{font-size:0.9rem;padding:6px}
+
+/* === Overlay controller styles === */
+:root {
+  --overlay-bg: rgba(0, 0, 0, 0.45);
+  --button-size: 64px;
+  --button-gap: 12px;
+  --accent: #00e676;
+  --muted: rgba(255, 255, 255, 0.85);
+}
+
+#videoContainer {
+  position: relative;
+  width: 100%;
+  background: #000;
+}
+
+#videoContainer:fullscreen {
+  width: 100%;
+  height: 100%;
+}
+
+#videoContainer video {
+  width: 100%;
+  height: 100%;
+  display: block;            /* remove bottom spacing caused by inline-block */
+}
+
+#controllerOverlay {
+    height:100%;
+    width: 100%;
+    display:grid;
+    grid-template: 50% 50% / 100%;
+    position: absolute;
+    top: 0;
+    pointer-events: none;      /* clicks pass through unless overridden */
+    z-index: 10;               /* <— ensure it's above the video */
+}
+
+#hideController {
+    display: none;
+}
+
+#hideController.visible {
+    display:block;
+}
+
+.controller-bg {
+    display:flex;
+    justify-content:space-between;
+    align-items: center;
+    padding: 3em;
+}
+
+.dpad, .cluster {
+    display: grid;
+    grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+    gap: var(--button-gap);
+}
+
+#controllerOverlay button {
+  pointer-events: auto;      /* re-enable clicks for buttons */
+  padding: 10px 14px;
+  border-radius: 50%;
+  border: none;
+  color: white;
+  font-weight: bold;
+  font-size: 1rem;
+}
+
+#markerDropdown {
+    pointer-events: auto;
+    color: black;
+}
+
+#exitFullscreen {
+  background: rgba(255,255,255,0.1);
+}
+
+.btn.left, .btn.abxy-y {
+    grid-area: 2 / 1;
+}
+
+.btn.right, .btn.abxy-a {
+    grid-area: 2 / 3;
+}
+
+.btn.abxy-b {
+    grid-area: 3 / 2;
+}
+
+.btn.abxy-x {
+    grid-area: 1 / 2;
+}
+
+.btn {
+  width: var(--button-size);
+  height: var(--button-size);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.1);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  user-select: none;
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn.abxy-a { background: #e74c3c; }
+.btn.abxy-b { background: #f1c40f; }
+.btn.abxy-x { background: #27ae60; }
+.btn.abxy-y { background: #2980b9; }
+
+@media (max-width:900px) {
+  :root { --button-size:52px; }
+  .controller-bg { padding:12px; }
+}
