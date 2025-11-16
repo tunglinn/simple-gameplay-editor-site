@@ -64,7 +64,6 @@ button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;backgrou
 .dpad, .cluster {
     display: grid;
     grid-template: repeat(3, 1fr) / repeat(3, 1fr);
-    gap: var(--button-gap);
 }
 
 #controllerOverlay button {
@@ -77,9 +76,17 @@ button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;backgrou
   font-size: 1rem;
 }
 
+.utility-bg {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+
+}
+
 #markerDropdown {
     pointer-events: auto;
     color: black;
+    width: 20em;
 }
 
 #exitFullscreen {
@@ -123,4 +130,11 @@ button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;backgrou
 @media (max-width:900px) {
   :root { --button-size:52px; }
   .controller-bg { padding:12px; }
+}
+
+.white-text {
+    color: white;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
 }

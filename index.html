@@ -15,12 +15,14 @@
 <button id="importJson" class="small">Import JSON</button>
 <button id="fullScreenBtn" class="small">Enter Fullscreen</button>
 <button id="exportJson" class="small">Export JSON</button>
+<span id="score">Home 0:0 Away</span>
 <div id="videoContainer">
   <video id="video" controls></video>
   <div id="hideController">
     <div class="controller-overlay" id="controllerOverlay">
       <div class="utility-bg">
         <button id="exitFullscreen" class="small">Exit</button>
+        <span id="score" class="white-text">Home 0:0 Away</span>
         <select id="markerDropdown">
           <option value="default" selected hidden>Marker list</option>
         </select>
@@ -31,10 +33,10 @@
             <button class="btn right" data-action="right">▶</button>
           </div>
           <div class="cluster">
-            <button class="btn abxy-b" data-action="b">B</button>
-            <button class="btn abxy-y" data-action="y">Y</button>
-            <button class="btn abxy-x" data-action="x">X</button>
-            <button class="btn abxy-a" data-action="a">A</button>
+            <button class="btn abxy-b" data-action="b">NP</button>
+            <button class="btn abxy-y" data-action="y">A</button>
+            <button class="btn abxy-x" data-action="x">H</button>
+            <button class="btn abxy-a" data-action="a">S</button>
           </div>
       </div>
     </div>
@@ -72,6 +74,7 @@ const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const labelInput = document.getElementById('labelInput');
 const exitFullscreen = document.getElementById('exitFullscreen')
+const scoreSpan = document.getElementById('score');
 
 let marks = [];
 let currentFileName = null;
@@ -250,6 +253,35 @@ document.addEventListener('keydown', (e)=>{
   if(e.key.toLowerCase() === 'a') awayPtBtn.click();
   if(e.key.toLowerCase() === 'j') noPtBtn.click();
 });
+
+// Score Display
+
+function updateScore(home, away) {
+  scoreSpan.textContent = `Home ${home}:${away} Away`;
+}
+
+video.addEventListener("timeupdate", () =>  {
+  const current = video.currentTime;
+
+  // Calculate score
+  let home = 0;
+  let away = 0;
+  for (let i = marks.length - 1; i >= 0; i--) {
+    if (current >= marks[i].time / 1000) {
+      switch (marks[i].label) {
+        case 'Home point':
+          home++;
+          break;
+        case 'Away point':
+          away++;
+          break;
+      }
+    }
+  }
+  updateScore(home, away)
+})
+
+// Controller Overlay
 
 function refreshDropdown(selectedMarker) {
   const select = document.getElementById("markerDropdown");
