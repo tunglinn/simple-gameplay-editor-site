@@ -38,8 +38,6 @@ button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;backgrou
 #controllerOverlay {
     height:100%;
     width: 100%;
-    display:grid;
-    grid-template: 50% 50% / 100%;
     position: absolute;
     top: 0;
     pointer-events: none;      /* clicks pass through unless overridden */
@@ -59,6 +57,7 @@ button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;backgrou
     justify-content:space-between;
     align-items: center;
     padding: 3em;
+    height: 100%;
 }
 
 .dpad, .cluster {
