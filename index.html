@@ -15,14 +15,14 @@
 <button id="importJson" class="small">Import JSON</button>
 <button id="fullScreenBtn" class="small">Enter Fullscreen</button>
 <button id="exportJson" class="small">Export JSON</button>
-<span id="score">Home 0:0 Away</span>
+<span class="score">Home 0:0 Away</span>
 <div id="videoContainer">
   <video id="video" controls></video>
   <div id="hideController">
     <div class="controller-overlay" id="controllerOverlay">
       <div class="utility-bg">
         <button id="exitFullscreen" class="small">Exit</button>
-        <span id="score" class="white-text">Home 0:0 Away</span>
+        <span class="score" id="white-text">Home 0:0 Away</span>
         <select id="markerDropdown">
           <option value="default" selected hidden>Marker list</option>
         </select>
@@ -74,7 +74,7 @@ const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const labelInput = document.getElementById('labelInput');
 const exitFullscreen = document.getElementById('exitFullscreen')
-const scoreSpan = document.getElementById('score');
+const scoreSpans = document.querySelectorAll('.score');
 
 let marks = [];
 let currentFileName = null;
@@ -257,7 +257,9 @@ document.addEventListener('keydown', (e)=>{
 // Score Display
 
 function updateScore(home, away) {
-  scoreSpan.textContent = `Home ${home}:${away} Away`;
+  scoreSpans.forEach(span => {
+    span.textContent = `Home ${home}:${away} Away`;
+  });
 }
 
 video.addEventListener("timeupdate", () =>  {

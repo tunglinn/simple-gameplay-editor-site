@@ -132,7 +132,7 @@ button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;backgrou
   .controller-bg { padding:12px; }
 }
 
-.white-text {
+#white-text {
     color: white;
     position: absolute;
     left: 50%;
