@@ -73,7 +73,7 @@ const clearBtn = document.getElementById('clearBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const labelInput = document.getElementById('labelInput');
-const exitFullscreen = document.getElementById('exitFullscreen')
+const exitFullscreen = document.getElementById('exitFullscreen');
 const scoreSpans = document.querySelectorAll('.score');
 
 let marks = [];
@@ -329,7 +329,7 @@ document.addEventListener('fullscreenchange', () => {
   }
 });
 
-// Make video request fullscreen when double-clicked
+
 fullScreen.onclick = () => {
   const container = document.getElementById('videoContainer');
   if (!document.fullscreenElement) container.requestFullscreen();
@@ -342,7 +342,7 @@ exitFullscreen.onclick = () => {
 
 // Dispatch custom "game-control" events for your own handlers
 function triggerControl(action){
-  video.dispatchEvent(new CustomEvent('game-control',{detail:{action}}));
+  overlay.dispatchEvent(new CustomEvent('game-control',{detail:{action}}));
 }
 
 // Button clicks
@@ -363,7 +363,7 @@ document.addEventListener('keydown',(e)=>{
 });
 
 // Example: listen to game-control events (you can wire real actions)
-video.addEventListener('game-control',(e)=>{
+overlay.addEventListener('game-control',(e)=>{
   const a = e.detail.action;
   console.log('game-control:',a);
   if(a==='left') prevBtn.click();
