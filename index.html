@@ -142,12 +142,30 @@ function refreshMarks(){
   marks.forEach((m, i)=>{
     const div = document.createElement('div');
     div.className = 'mark';
-    div.innerHTML = `
-      <div class="time">${prettyTime(m.time)}</div>
-      <div style="flex:1"><input data-idx="${i}" class="editLabel" value="${m.label||''}" style="width:100%"/></div>
-      <button data-idx="${i}" class="jump small">Jump</button>
-      <button data-idx="${i}" class="del small">Delete</button>
-    `;
+    is_serve = m.label==="Serve"
+    if(is_serve) {
+      div.innerHTML = `
+        <div class="time">${prettyTime(m.time)}</div>
+        <div style="flex:1;display: flex">
+          <input data-idx="${i}" class="editLabel" value="${m.label||''}" style="width:100%"/>
+        </div>
+        <button data-idx="${i}" class="jump small">Jump</button>
+        <button data-idx="${i}" class="del small">Delete</button>
+      `;
+    }
+    else {
+      div.innerHTML = `
+        <div class="time">${prettyTime(m.time)}</div>
+        <div style="flex:1;display: flex">
+          <input data-idx="${i}" class="editLabel" value="${m.label||''}" style="width:100%"/>
+          <label for="highlightCheckbox" style="align-content:center;padding:5px">Highlight?</label>
+          <input type="checkbox" id="highlightCheckbox"/>
+        </div>
+        <button data-idx="${i}" class="jump small">Jump</button>
+        <button data-idx="${i}" class="del small">Delete</button>
+      `;
+    }
+    
     marksList.appendChild(div);
   });
 
