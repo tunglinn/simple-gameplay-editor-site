@@ -13,6 +13,7 @@
 <details>
   <summary>Instructions</summary>
     <ol>
+      <li>Enter team names</li>
       <li>Select video to mark</li>
       <li>Click "Enter Fullscreen" to use overlay buttons (or use the buttons below the video)</li>
       <li>Use the buttons to mark times (Serve, Home, Away, No Point)</li>
@@ -25,7 +26,11 @@
 <button id="importJson" class="small">Import JSON</button>
 <button id="fullScreenBtn" class="small">Enter Fullscreen</button>
 <button id="exportJson" class="small">Export JSON</button>
-<span class="score">Home 0:0 Away</span>
+<div id="scoreContainer">
+  <label"><input id="homeNameInput" placeholder="Enter home team name"/></label>
+  <span class="score">Home 0:0 Away</span>
+  <label"><input id="awayNameInput" placeholder="Enter away team name"/></label>
+</div>
 <div id="videoContainer">
   <video id="video" controls preload="auto" playsinline></video>
   <div id="hideController">
@@ -212,10 +217,14 @@ clearBtn.onclick = ()=>{
 };
 
 exportBtn.onclick = ()=>{
+  const home_name = document.querySelector("#homeNameInput")
+  const away_name = document.querySelector("#awayNameInput")
   const out = {
     filename: currentFileName,
     created: new Date().toISOString(),
     duration: video.duration || null,
+    home: home_name,
+    away: away_name,
     marks: marks
   };
   const blob = new Blob([JSON.stringify(out, null, 2)], {type:'application/json'});
