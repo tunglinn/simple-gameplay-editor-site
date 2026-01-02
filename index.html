@@ -130,14 +130,19 @@ function prettyTime(t){
   return `${minutes}:${seconds}`;
 }
 
+function sortMarks(){
+  console.log("sorting")
+  marks.sort((a,b) => a["time"] - b["time"])
+}
+
 function addMark(time, label=''){
   const mark = { time: Number(time * 1000), label: label || null };
   marks.push(mark);
   refreshMarks();
-  refreshDropdown(mark);
 }
 
 function refreshMarks(){
+  sortMarks()
   marksList.innerHTML = '';
   marks.forEach((m, i)=>{
     const div = document.createElement('div');
@@ -189,6 +194,7 @@ function refreshMarks(){
       marks[i].label = inp.value || null;
     };
   });
+  refreshDropdown()
 }
 
 serveBtn.onclick = ()=>{
@@ -322,7 +328,7 @@ video.addEventListener("timeupdate", () =>  {
 
 // Controller Overlay
 
-function refreshDropdown(selectedMarker) {
+function refreshDropdown() {
   const select = document.getElementById("markerDropdown");
   select.innerHTML = ""; // clear
 
@@ -338,7 +344,7 @@ function refreshDropdown(selectedMarker) {
     } else {
         option.textContent = `(${prettyTime(mark.time)})`;
     }
-    
+
     if (selectedMarker !== null && mark === selectedMarker) {
       option.selected = true;
     }
