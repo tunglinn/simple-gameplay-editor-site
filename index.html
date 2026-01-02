@@ -241,8 +241,8 @@ clearBtn.onclick = ()=>{
 };
 
 exportBtn.onclick = ()=>{
-  const home_name = document.querySelector("#homeNameInput")
-  const away_name = document.querySelector("#awayNameInput")
+  const home_name = document.querySelector("#homeNameInput").value
+  const away_name = document.querySelector("#awayNameInput").value
   const out = {
     filename: currentFileName,
     created: new Date().toISOString(),
@@ -251,6 +251,7 @@ exportBtn.onclick = ()=>{
     away: away_name,
     marks: marks
   };
+  console.log(out)
   const blob = new Blob([JSON.stringify(out, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
