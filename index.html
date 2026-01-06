@@ -44,7 +44,8 @@
       </div>
       <div class="controller-bg">
           <div class="dpad">
-            <button class="btn left" data-action="left">◀</button>
+            <button class="btn left" data-action="left">&#10084;</button>
+            <button class="btn up" data-action="up">♡</button>
             <button class="btn right" data-action="right">▶</button>
           </div>
           <div class="cluster">
@@ -63,6 +64,7 @@
   <button id="noPtBtn" class="small">Mark No Point</button>
   <button id="homePtBtn" class="small">Mark Home Point</button>
   <button id="awayPtBtn" class="small">Mark Away Point</button>
+  <button id="likeBtn" class="small">Nice!</button>
   <button id="prevBtn" class="small">Jump -5s</button>
   <button id="nextBtn" class="small">Jump +5s</button>
   <button id="clearBtn" class="small">Clear Marks</button>
@@ -87,6 +89,7 @@ const importBtn = document.getElementById('importJson');
 const clearBtn = document.getElementById('clearBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
+const likeBtn = document.getElementById('likeBtn')
 const labelInput = document.getElementById('labelInput');
 const exitFullscreen = document.getElementById('exitFullscreen');
 const scoreSpans = document.querySelectorAll('.score');
@@ -137,7 +140,7 @@ function sortMarks(){
 }
 
 function addMark(time, label=''){
-  const mark = { time: Number(time * 1000), label: label || null };
+  const mark = { time: Number(time * 1000), label: label || null, highlight:false };
   marks.push(mark);
   refreshMarks();
 }
@@ -149,11 +152,15 @@ function refreshMarks(){
     const div = document.createElement('div');
     div.className = 'mark';
     is_serve = m.label==="Serve"
+    let highlight = m.highlight
     if(is_serve) {
       div.innerHTML = `
         <div class="time">${prettyTime(m.time)}</div>
         <div style="flex:1;display: flex">
           <input data-idx="${i}" class="editLabel" value="${m.label||''}" style="width:100%"/>
+          <label for="highlightCheckbox" style="align-content:center;padding:5px">Highlight?</label>
+          <input type="checkbox" id="highlightCheckbox"
+          ${highlight ? 'checked' : ''}/>
         </div>
         <button data-idx="${i}" class="jump small">Jump</button>
         <button data-idx="${i}" class="del small">Delete</button>
@@ -164,8 +171,6 @@ function refreshMarks(){
         <div class="time">${prettyTime(m.time)}</div>
         <div style="flex:1;display: flex">
           <input data-idx="${i}" class="editLabel" value="${m.label||''}" style="width:100%"/>
-          <label for="highlightCheckbox" style="align-content:center;padding:5px">Highlight?</label>
-          <input type="checkbox" id="highlightCheckbox"/>
         </div>
         <button data-idx="${i}" class="jump small">Jump</button>
         <button data-idx="${i}" class="del small">Delete</button>
@@ -233,7 +238,10 @@ awayPtBtn.onclick = ()=>{
   const label = "Away point";
   addMark(video.currentTime, label);
 };
-
+likeBtn.onclick = ()=> {
+  currentMarker.highlight=!currentMarker.highlight;
+  refreshMarks()
+}
 prevBtn.onclick = ()=> video.currentTime = Math.max(0, video.currentTime - 5);
 nextBtn.onclick = ()=> video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
 
@@ -278,9 +286,11 @@ importBtn.onclick = ()=>{
       }
       marks = [];
       for(const [i, mark] of Object.entries(data.marks)){
+        console.log(mark)
         const t = parseFloat(mark["time"]);
         const label = mark["label"]
-        if(!isNaN(t)) marks.push({time:t, label:label||""});
+        const highlight = mark["highlight"]
+        if(!isNaN(t)) marks.push({time:t, label:label||"", highlight:highlight||false});
       }
       refreshMarks();
       alert('Marks imported successfully.');
@@ -354,7 +364,7 @@ function refreshDropdown() {
 
     // If label is null, show just "(time)"
     if (mark.label) {
-        option.textContent = `${mark.label} (${prettyTime(mark.time)})`;
+        option.textContent = `${mark.label}${mark.highlight ? '!!' : ''} (${prettyTime(mark.time)})`;
     } else {
         option.textContent = `(${prettyTime(mark.time)})`;
     }
@@ -416,6 +426,7 @@ document.addEventListener('keydown',(e)=>{
   const key = e.key.toLowerCase();
   if(key==='arrowleft') triggerControl('left');
   if(key==='arrowright') triggerControl('right');
+  if(key==='arrowup') triggerControl('up');
   if(['a','b','x','y'].includes(key)) triggerControl(key);
 });
 
@@ -424,6 +435,7 @@ overlay.addEventListener('game-control',(e)=>{
   const a = e.detail.action;
   if(a==='left') prevBtn.click();
   if(a==='right') nextBtn.click();
+  if(a==='up') likeBtn.click();
   if(a==='a') serveBtn.click();
   if(a==='b') noPtBtn.click();
   if(a==='x') homePtBtn.click();
