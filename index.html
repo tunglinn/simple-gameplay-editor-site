@@ -94,6 +94,9 @@ const labelInput = document.getElementById('labelInput');
 const exitFullscreen = document.getElementById('exitFullscreen');
 const scoreSpans = document.querySelectorAll('.score');
 
+const homeName = document.querySelector("#homeNameInput")
+const awayName = document.querySelector("#awayNameInput")
+
 
 let currentMarker = null;
 let marks = [];
@@ -250,8 +253,8 @@ clearBtn.onclick = ()=>{
 };
 
 exportBtn.onclick = ()=>{
-  const home_name = document.querySelector("#homeNameInput").value
-  const away_name = document.querySelector("#awayNameInput").value
+  const home_name = homeName.value
+  const away_name = awayName.value
   const out = {
     filename: currentFileName,
     created: new Date().toISOString(),
@@ -284,6 +287,9 @@ importBtn.onclick = ()=>{
         alert('Invalid JSON format.');
         return;
       }
+      homeName.value = data.home
+      awayName.value = data.away
+      updateScore(0, 0)
       marks = [];
       for(const [i, mark] of Object.entries(data.marks)){
         console.log(mark)
@@ -313,7 +319,7 @@ document.addEventListener('keydown', (e)=>{
 
 function updateScore(home, away) {
   scoreSpans.forEach(span => {
-    span.textContent = `Home ${home}:${away} Away`;
+    span.textContent = `${homeName.value || "Home"} ${home}:${away} ${awayName.value || "Away"}`;
   });
 }
 
