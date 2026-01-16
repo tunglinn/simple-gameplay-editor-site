@@ -252,7 +252,32 @@ clearBtn.onclick = ()=>{
   if(confirm('Clear all marks?')){ marks = []; refreshMarks(); }
 };
 
+function validateMarks() {
+  console.log(marks)
+  serve_count = 0
+  other_count = 0
+  for (let i = 0; i < marks.length; i++) {
+    if (marks[i].label === "Serve") {
+      serve_count += 1;
+      if (marks[i+1].label === "Serve") {
+        return false;
+      }
+    }
+    else if (serve_count > 0) {
+      other_count += 1;
+    }
+  }
+  if (serve_count != other_count) {
+    return false
+  }
+  return true;
+}
+
 exportBtn.onclick = ()=>{
+  if (!validateMarks()) {
+    alert('Check your markers. Make sure for every serve is followed by home, away or no point.')
+    return
+  }
   const home_name = homeName.value
   const away_name = awayName.value
   const out = {
