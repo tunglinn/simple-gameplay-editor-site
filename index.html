@@ -24,8 +24,8 @@
 
 <input id="videoFile" type="file" accept="video/*" />
 <button id="importJson" class="small">Import JSON</button>
-<button id="fullScreenBtn" class="small">Enter Fullscreen</button>
-<button id="exportJson" class="small">Export JSON</button>
+<button id="clearBtn" class="small" style="background-color: rgba(200,0,0,0.3);">Clear Marks</button>
+<button id="fullScreenBtn" class="small" style="background-color: rgba(0,200,0,0.3);">Enter Marking Mode</button>
 <div id="scoreContainer">
   <label"><input id="homeNameInput" placeholder="Enter home team name"/></label>
   <span class="score">Home 0:0 Away</span>
@@ -44,15 +44,15 @@
       </div>
       <div class="controller-bg">
           <div class="dpad">
-            <button class="btn left" data-action="left">◀</button>
-            <button class="btn up" data-action="up">♡</button>
-            <button class="btn right" data-action="right">▶</button>
+            <button class="btn left" id="prevBtn" data-action="left">◀</button>
+            <button class="btn up" id="likeBtn" data-action="up">♡</button>
+            <button class="btn right" id="nextBtn" data-action="right">▶</button>
           </div>
           <div class="cluster">
-            <button class="btn abxy-b" data-action="b">NP</button>
-            <button class="btn abxy-y" data-action="y">A</button>
-            <button class="btn abxy-x" data-action="x">H</button>
-            <button class="btn abxy-a" data-action="a">S</button>
+            <button class="btn abxy-b" id="noPtBtn" data-action="b">NP</button>
+            <button class="btn abxy-y" id="awayPtBtn" data-action="y">A</button>
+            <button class="btn abxy-x" id="homePtBtn" data-action="x">H</button>
+            <button class="btn abxy-a" id="serveBtn" data-action="a">S</button>
           </div>
       </div>
     </div>
@@ -60,15 +60,7 @@
 </div>
 
 <div class="controls">
-  <button id="serveBtn" class="small">Mark Serve</button>
-  <button id="noPtBtn" class="small">Mark No Point</button>
-  <button id="homePtBtn" class="small">Mark Home Point</button>
-  <button id="awayPtBtn" class="small">Mark Away Point</button>
-  <button id="likeBtn" class="small">Nice!</button>
-  <button id="prevBtn" class="small">Jump -5s</button>
-  <button id="nextBtn" class="small">Jump +5s</button>
-  <button id="clearBtn" class="small">Clear Marks</button>
-  <label style="margin-left:auto">Label: <input id="labelInput" placeholder="optional label" /></label>
+<button id="exportJson" class="small">Export JSON</button>
 </div>
 
 <div id="marks">
@@ -437,43 +429,6 @@ fullScreen.onclick = () => {
 exitFullscreen.onclick = () => {
   document.exitFullscreen()
 }
-
-// Dispatch custom "game-control" events for your own handlers
-function triggerControl(action){
-  overlay.dispatchEvent(new CustomEvent('game-control',{detail:{action}}));
-}
-
-// Button clicks
-overlay.querySelectorAll('.btn').forEach(btn=>{
-  btn.onclick = ()=>{
-    const action = btn.dataset.action;
-    triggerControl(action);
-  };
-});
-
-// Keyboard controls while fullscreen
-document.addEventListener('keydown',(e)=>{
-  if(!document.fullscreenElement) return;
-  const key = e.key.toLowerCase();
-  if(key==='arrowleft') triggerControl('left');
-  if(key==='arrowright') triggerControl('right');
-  if(key==='arrowup') triggerControl('up');
-  if(['a','b','x','y'].includes(key)) triggerControl(key);
-});
-
-// Example: listen to game-control events (you can wire real actions)
-overlay.addEventListener('game-control',(e)=>{
-  const a = e.detail.action;
-  if(a==='left') prevBtn.click();
-  if(a==='right') nextBtn.click();
-  if(a==='up') likeBtn.click();
-  if(a==='a') serveBtn.click();
-  if(a==='b') noPtBtn.click();
-  if(a==='x') homePtBtn.click();
-  if(a==='y') awayPtBtn.click();
-});
-
-
 
 // basic mobile compatibility note: some mobile browsers restrict autoplay; user must tap play.
 </script>
