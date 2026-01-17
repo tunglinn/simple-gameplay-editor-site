@@ -82,8 +82,8 @@ const clearBtn = document.getElementById('clearBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const likeBtn = document.getElementById('likeBtn')
-const labelInput = document.getElementById('labelInput');
 const exitFullscreen = document.getElementById('exitFullscreen');
+const markerDropdown = document.getElementById("markerDropdown");
 const scoreSpans = document.querySelectorAll('.score');
 
 const homeName = document.querySelector("#homeNameInput")
@@ -376,8 +376,8 @@ function findCurrentMarker(time) {
 // Controller Overlay
 
 function refreshDropdown() {
-  const select = document.getElementById("markerDropdown");
-  select.innerHTML = ""; // clear
+  
+  markerDropdown.innerHTML = ""; // clear
 
   marks.forEach(mark => {
     const option = document.createElement("option");
@@ -395,14 +395,23 @@ function refreshDropdown() {
     if (currentMarker !== null && currentMarker === mark) {
       option.selected = true;
     }
-    select.appendChild(option);
+    markerDropdown.appendChild(option);
   });
 }
 
-document.getElementById("markerDropdown").addEventListener("change", (e) => {
+function jumpToMarker(e) {
     const time = e.target.value;
     video.currentTime = time / 1000;
-});
+    video.play()
+}
+let isOpen=false
+markerDropdown.addEventListener("focus", (e) => {
+  video.pause()
+})
+markerDropdown.addEventListener("input", (e) => {
+  jumpToMarker(e)
+  markerDropdown.blur()
+})
 
 // === Fullscreen + controller overlay ===
 const hiddenLayer = document.getElementById('hideController');
