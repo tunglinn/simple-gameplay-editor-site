@@ -285,7 +285,7 @@ exportBtn.onclick = ()=>{
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = (currentFileName ? currentFileName.replace(/\.[^/.]+$/, '') : 'video') + '_marks.json';
+  a.download = home_name+'_vs_'+away_name+'_marks.json';
   a.click();
   URL.revokeObjectURL(url);
 };
