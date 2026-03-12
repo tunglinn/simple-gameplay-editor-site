@@ -4,6 +4,7 @@ header{display:flex;gap:12px;align-items:center}
 #video{width:100%;background:#000}
 .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 button,input,select{padding:8px;border-radius:6px;border:1px solid #ddd;background:#fff}
+.teamInput{width:8em}
 #marks{margin-top:12px}
 .mark{display:flex;gap:8px;align-items:center;padding:6px;border:1px solid #eee;border-radius:6px;margin-bottom:6px}
 .time{font-family:monospace;width:90px}

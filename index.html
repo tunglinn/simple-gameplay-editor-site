@@ -25,11 +25,12 @@
 <input id="videoFile" type="file" accept="video/*" />
 <button id="importJson" class="small">Import JSON</button>
 <button id="clearBtn" class="small" style="background-color: rgba(200,0,0,0.3);">Clear Marks</button>
-<button id="fullScreenBtn" class="small" style="background-color: rgba(0,200,0,0.3);">Enter Marking Mode</button>
 <div id="scoreContainer">
-  <label"><input id="homeNameInput" placeholder="Enter home team name"/></label>
+  <label><input class="teamInput" id="homeNameInput" placeholder="Enter home team name"/></label>
   <span class="score">Home 0:0 Away</span>
-  <label"><input id="awayNameInput" placeholder="Enter away team name"/></label>
+  <label><input class="teamInput" id="awayNameInput" placeholder="Enter away team name"/></label>
+  
+<button id="fullScreenBtn" class="small" style="background-color: rgba(0,200,0,0.3);">Enter Marking Mode</button>
 </div>
 <div id="videoContainer">
   <video id="video" controls preload="auto" playsinline></video>
