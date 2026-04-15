@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Video Marker — Prototype</title>
+  <link rel="canonical" href="https://https://tunglinn.github.io/simple-gameplay-editor-site/" />
+  <link rel="manifest" href="/simple-gameplay-editor-site/manifest.webmanifest">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -439,8 +441,12 @@ fullScreen.onclick = () => {
 exitFullscreen.onclick = () => {
   document.exitFullscreen()
 }
-
-// basic mobile compatibility note: some mobile browsers restrict autoplay; user must tap play.
+if (navigator.serviceWorker) {
+      navigator.serviceWorker.register (
+        '/simple-gameplay-editor-site/sw.js',
+        {scope: '/simple-gameplay-editor-site/'}
+      )
+    }
 </script>
 
 </body>
