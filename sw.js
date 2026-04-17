@@ -1,21 +1,34 @@
+// SportMark Service Worker
+const CACHE = 'sportmark-v1';
+const ASSETS = [
+  './',
+  './index.html',
+  './manifest.json',
+];
 
-// Change this to your repository name
-var GHPATH = '/simple-gameplay-editor-site';
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(ASSETS))
+  );
+  self.skipWaiting();
+});
 
-// Choose a different app prefix name
-var APP_PREFIX = 'sge_';
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    )
+  );
+  self.clients.claim();
+});
 
-// The version of the cache. Every time you change any of the files
-// you need to change this version (version_01, version_02…). 
-// If you don't change the version, the service worker will give your
-// users the old files!
-var VERSION = 'version_00';
-
-// The files to make available for offline use. make sure to add 
-// others to this list
-var URLS = [    
-  `${GHPATH}/`,
-  `${GHPATH}/index.html`,
-  `${GHPATH}/css/styles.css`,
-  `${GHPATH}/js/app.js`
-]
+self.addEventListener('fetch', e => {
+  // Don't cache cross-origin or Google Fonts requests at SW level
+  if (!e.request.url.startsWith(self.location.origin)) {
+    e.respondWith(fetch(e.request).catch(() => new Response('', { status: 503 })));
+    return;
+  }
+  e.respondWith(
+    caches.match(e.request).then(cached => cached || fetch(e.request))
+  );
+});

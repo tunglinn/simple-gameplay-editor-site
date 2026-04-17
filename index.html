@@ -1,85 +1,1103 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Video Marker — Prototype</title>
-  <link rel="canonical" href="https://https://tunglinn.github.io/simple-gameplay-editor-site/" />
-  <link rel="manifest" href="/simple-gameplay-editor-site/manifest.webmanifest">
-  <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>SportMark</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#FFFFFF">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="SportMark">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #FFFFFF;
+      --surface:      #F5F5F5;
+      --surface2:     #EBEBEB;
+      --border:       #E2E2E2;
+      --text:         #111111;
+      --text2:        #666666;
+      --text3:        #AAAAAA;
+      --serve:        #00BFA5;
+      --serve-light:  #E0F7FA;
+      --home:         #1A73E8;
+      --home-light:   #E8F0FE;
+      --away:         #E53935;
+      --away-light:   #FDECEA;
+      --nopt:         #757575;
+      --nopt-light:   #F0F0F0;
+      --highlight:    #FFAB00;
+      --danger:       #D32F2F;
+      --radius:       14px;
+      --radius-sm:    9px;
+      --nav-h:        68px;
+      --header-h:     56px;
+      --trans:        0.18s ease;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Barlow', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    button { font-family: 'Barlow', sans-serif; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+
+    /* ══════════════════════════════════════════
+       MAIN VIEW
+    ══════════════════════════════════════════ */
+    #main-view {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      background: var(--bg);
+    }
+
+    /* Header */
+    #header {
+      height: var(--header-h);
+      display: flex; align-items: center;
+      padding: 0 12px; gap: 8px;
+      border-bottom: 1px solid var(--border);
+      background: #fff; z-index: 10; flex-shrink: 0;
+    }
+
+    .logo {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 20px; font-weight: 900;
+      letter-spacing: -0.5px; color: var(--text);
+      flex-shrink: 0; line-height: 1;
+    }
+    .logo em { color: var(--serve); font-style: normal; }
+
+    .team-wrap { flex: 1; position: relative; min-width: 0; }
+    .team-input {
+      width: 100%;
+      border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+      padding: 7px 10px;
+      font-family: 'Barlow', sans-serif; font-size: 13px; font-weight: 600;
+      color: var(--text); background: var(--surface);
+      outline: none; transition: border-color var(--trans), background var(--trans);
+    }
+    .team-input::placeholder { color: var(--text3); font-weight: 400; }
+    .team-input:focus { border-color: var(--home); background: #fff; }
+    .team-input.away:focus { border-color: var(--away); }
+    .team-color-bar {
+      position: absolute; bottom: 0; left: 8px; right: 8px;
+      height: 2px; border-radius: 1px;
+      background: var(--home); opacity: 0;
+      transition: opacity var(--trans);
+    }
+    .team-input:focus + .team-color-bar { opacity: 1; }
+    .team-wrap.away .team-color-bar { background: var(--away); }
+
+    .vs { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; color: var(--text3); flex-shrink: 0; letter-spacing: 1px; }
+
+    /* Video area */
+    #video-area {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      background: #0a0a0a; position: relative; overflow: hidden;
+    }
+
+    #main-video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; display: none; }
+
+    #placeholder {
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+      cursor: pointer; padding: 40px; text-align: center;
+      animation: fadeIn 0.4s ease;
+    }
+    .ph-ring {
+      width: 80px; height: 80px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.08);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 34px;
+      background: rgba(255,255,255,0.04);
+    }
+    #placeholder p { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 700; color: rgba(255,255,255,0.55); }
+    #placeholder small { font-size: 13px; color: rgba(255,255,255,0.3); }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Bottom Nav */
+    #bottom-nav {
+      height: var(--nav-h); display: flex; align-items: stretch;
+      border-top: 1px solid var(--border); background: #fff; flex-shrink: 0;
+    }
+
+    .nav-btn {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 4px; border: none; background: none; cursor: pointer;
+      color: var(--text3); font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+      text-transform: uppercase; transition: color var(--trans);
+      position: relative;
+    }
+    .nav-btn::after {
+      content: ''; position: absolute; top: 0; left: 20%; right: 20%;
+      height: 2px; background: var(--serve); border-radius: 1px;
+      transform: scaleX(0); transition: transform var(--trans);
+    }
+    .nav-btn.active { color: var(--serve); }
+    .nav-btn.active::after { transform: scaleX(1); }
+    .nav-btn:active { color: var(--text2); }
+    .nav-btn svg { width: 22px; height: 22px; stroke-width: 1.8; }
+
+    #file-input { display: none; }
+
+    /* ══════════════════════════════════════════
+       EDITOR VIEW (fullscreen overlay)
+    ══════════════════════════════════════════ */
+    #editor-view {
+      position: fixed; inset: 0;
+      background: #000;
+      display: flex; flex-direction: column;
+      z-index: 100;
+      visibility: hidden; opacity: 0;
+      transition: opacity 0.22s ease, visibility 0.22s;
+    }
+    #editor-view.open { visibility: visible; opacity: 1; }
+
+    #editor-video {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%; object-fit: contain;
+    }
+
+    /* Top bar */
+    #ed-top {
+      position: relative; z-index: 5;
+      display: flex; align-items: center;
+      padding: 10px 14px; gap: 10px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.72) 0%, transparent 100%);
+      pointer-events: none;
+    }
+    #ed-top > * { pointer-events: auto; }
+
+    .gl-btn {
+      width: 38px; height: 38px; border-radius: 50%;
+      border: none; background: rgba(255,255,255,0.14);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; flex-shrink: 0;
+      transition: background var(--trans), transform 0.1s;
+    }
+    .gl-btn:active { background: rgba(255,255,255,0.28); transform: scale(0.9); }
+    .gl-btn:disabled { opacity: 0.35; }
+    .gl-btn svg { width: 17px; height: 17px; stroke-width: 2.2; }
+
+    #score-wrap { flex: 1; text-align: center; }
+    #score-teams { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.55); letter-spacing: 1.5px; text-transform: uppercase; }
+    #score-nums { font-family: 'Barlow Condensed', sans-serif; font-size: 34px; font-weight: 900; line-height: 1; letter-spacing: 1px; color: #fff; }
+    #score-nums .sh { color: #82b4ff; }
+    #score-nums .sa { color: #ff8a80; }
+    #score-nums .sep { color: rgba(255,255,255,0.35); font-weight: 500; margin: 0 3px; }
+
+    /* Active clip indicator */
+    #rec-bar {
+      position: relative; z-index: 5;
+      display: flex; align-items: center; justify-content: center;
+      padding: 4px 14px; min-height: 32px;
+    }
+    .rec-pill {
+      display: flex; align-items: center; gap: 7px;
+      background: rgba(0,191,165,0.18);
+      border: 1px solid rgba(0,191,165,0.45);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      border-radius: 100px; padding: 5px 14px;
+      color: #4ECDC4;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+    }
+    .rec-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--serve); animation: blink 1.1s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+
+    /* Spacer */
+    #ed-spacer { flex: 1; }
+
+    /* Progress */
+    #progress-wrap { position: relative; z-index: 5; padding: 0 16px 6px; }
+    #vid-progress {
+      width: 100%; height: 3px; -webkit-appearance: none; appearance: none;
+      background: rgba(255,255,255,0.18); border-radius: 2px; outline: none; cursor: pointer;
+    }
+    #vid-progress::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; margin-top: -5.5px; }
+    #vid-progress::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; }
+    #vid-progress::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; cursor: pointer; }
+
+    /* Controls */
+    #ed-controls {
+      position: relative; z-index: 5;
+      display: flex; align-items: center; justify-content: space-around;
+      padding: 10px 20px 28px; gap: 20px;
+      background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%);
+    }
+
+    /* D-pad */
+    #dpad { display: grid; grid-template-columns: 46px 46px 46px; grid-template-rows: 46px 46px 46px; gap: 5px; }
+
+    .dp {
+      border-radius: 10px; border: none;
+      background: rgba(255,255,255,0.11);
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; font-size: 14px; font-weight: 700;
+      transition: background 0.1s, transform 0.1s;
+    }
+    .dp:active { background: rgba(255,255,255,0.26); transform: scale(0.88); }
+    .dp.center { background: rgba(255,255,255,0.18); font-size: 16px; }
+    .dp-empty { background: transparent !important; pointer-events: none; }
+    .dp.star-on { background: rgba(255,171,0,0.3); color: var(--highlight); }
+    .dp svg { width: 18px; height: 18px; stroke-width: 2.2; pointer-events: none; }
+
+    /* Action pad */
+    #action-pad { display: grid; grid-template-columns: 86px 76px; grid-template-rows: 46px 46px 46px; gap: 5px; }
+
+    .act {
+      border: none; border-radius: 10px; color: #fff;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 800; letter-spacing: 1px;
+      cursor: pointer; text-transform: uppercase;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform 0.1s, opacity var(--trans);
+    }
+    .act:active:not(:disabled) { transform: scale(0.88); }
+    .act:disabled { opacity: 0.28; cursor: default; }
+
+    #btn-serve { grid-row: 1/4; grid-column: 1; background: var(--serve); border-radius: 12px; font-size: 17px; letter-spacing: 1.5px; }
+    #btn-home  { grid-row: 1; grid-column: 2; background: var(--home); }
+    #btn-nopt  { grid-row: 2; grid-column: 2; background: var(--nopt); font-size: 12px; }
+    #btn-away  { grid-row: 3; grid-column: 2; background: var(--away); }
+
+    /* ══════════════════════════════════════════
+       MARKS MODAL (bottom sheet)
+    ══════════════════════════════════════════ */
+    #marks-modal {
+      position: fixed; inset: 0; z-index: 300;
+      display: flex; align-items: flex-end;
+      visibility: hidden; opacity: 0;
+      transition: opacity 0.22s ease, visibility 0.22s;
+    }
+    #marks-modal.open { visibility: visible; opacity: 1; }
+
+    .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+
+    .modal-sheet {
+      position: relative; width: 100%; max-height: 72vh;
+      background: #fff; border-radius: 20px 20px 0 0;
+      display: flex; flex-direction: column; overflow: hidden;
+      transform: translateY(30px);
+      transition: transform 0.22s ease;
+    }
+    #marks-modal.open .modal-sheet { transform: translateY(0); }
+
+    .modal-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 12px auto 0; flex-shrink: 0; }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .modal-title { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 800; color: var(--text); }
+    .modal-x { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 20px; line-height: 1; padding: 4px; }
+
+    .marks-scroll { overflow-y: auto; flex: 1; }
+
+    .mk-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px; border-bottom: 1px solid var(--border);
+    }
+    .mk-item.is-active { background: rgba(0,191,165,0.04); }
+
+    .mk-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    .mk-times { flex: 1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+    .ts-btn {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 4px 9px; font-family: 'Barlow', sans-serif; font-size: 12px; font-weight: 600;
+      color: var(--text); cursor: pointer; transition: background 0.12s;
+    }
+    .ts-btn:active { background: var(--surface2); }
+    .ts-btn.no-end { color: var(--text3); font-weight: 400; font-style: italic; border-style: dashed; }
+
+    .mk-arrow { font-size: 11px; color: var(--text3); }
+
+    .mk-type { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.5px; flex-shrink: 0; }
+
+    .mk-star { background: none; border: none; cursor: pointer; font-size: 18px; padding: 2px; transition: transform 0.12s; }
+    .mk-star:active { transform: scale(1.4); }
+
+    .mk-del { background: none; border: none; cursor: pointer; color: var(--away); font-size: 16px; padding: 4px; opacity: 0.7; }
+    .mk-del:active { opacity: 1; }
+
+    .marks-empty { padding: 40px 20px; text-align: center; color: var(--text3); font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 600; line-height: 1.6; }
+
+    /* ══════════════════════════════════════════
+       SLIDE PANELS (Review & Export)
+    ══════════════════════════════════════════ */
+    .panel {
+      position: fixed; inset: 0; z-index: 50;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      transform: translateY(100%);
+      transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .panel.open { transform: translateY(0); }
+
+    .panel-head {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 16px; height: var(--header-h);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .panel-title { font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; color: var(--text); flex: 1; letter-spacing: -0.3px; }
+    .panel-x {
+      width: 36px; height: 36px; border-radius: 50%; border: none;
+      background: var(--surface); color: var(--text2); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background var(--trans);
+    }
+    .panel-x:active { background: var(--surface2); }
+    .panel-x svg { width: 16px; height: 16px; stroke-width: 2.5; }
+
+    .panel-body { flex: 1; overflow-y: auto; }
+
+    /* Review list */
+    .rv-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 16px; border-bottom: 1px solid var(--border);
+    }
+    .rv-num { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: var(--text3); width: 22px; text-align: right; flex-shrink: 0; }
+    .rv-badge { border-radius: 6px; padding: 3px 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; flex-shrink: 0; }
+    .rv-times { flex: 1; display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+    .rv-chip { background: var(--surface); border-radius: 5px; padding: 2px 7px; font-size: 11px; color: var(--text2); font-weight: 600; font-family: 'Barlow', sans-serif; }
+    .rv-star { font-size: 14px; flex-shrink: 0; }
+
+    /* Export */
+    .export-body { padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; }
+
+    .scoreboard {
+      background: var(--text); border-radius: var(--radius);
+      padding: 22px 20px; color: #fff; text-align: center;
+    }
+    .sb-heads { display: flex; justify-content: space-between; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
+    .sb-score { font-family: 'Barlow Condensed', sans-serif; font-size: 64px; font-weight: 900; line-height: 1; letter-spacing: -2px; }
+    .sb-score .sh { color: #82b4ff; }
+    .sb-score .sa { color: #ff8a80; }
+    .sb-score .sep { color: rgba(255,255,255,0.25); font-weight: 400; margin: 0 6px; }
+
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+    .stat-card { background: var(--surface); border-radius: var(--radius-sm); padding: 14px 10px; text-align: center; }
+    .stat-n { font-family: 'Barlow Condensed', sans-serif; font-size: 34px; font-weight: 900; line-height: 1; }
+    .stat-l { font-size: 11px; color: var(--text2); font-weight: 600; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .meta-card { background: var(--surface); border-radius: var(--radius-sm); padding: 4px 14px; }
+    .meta-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .meta-row:last-child { border-bottom: none; }
+    .meta-l { color: var(--text2); font-weight: 500; }
+    .meta-v { color: var(--text); font-weight: 700; text-align: right; max-width: 60%; word-break: break-all; }
+
+    .dl-btn {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      background: var(--text); color: #fff; border: none;
+      border-radius: var(--radius); padding: 16px;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 800; letter-spacing: 1px;
+      cursor: pointer; width: 100%; text-transform: uppercase;
+      transition: opacity var(--trans);
+    }
+    .dl-btn:active { opacity: 0.8; }
+    .dl-btn svg { width: 20px; height: 20px; stroke-width: 2.2; }
+
+    /* ══════════════════════════════════════════
+       SNACKBAR
+    ══════════════════════════════════════════ */
+    #snack {
+      position: fixed; bottom: 82px; left: 50%;
+      transform: translateX(-50%) translateY(16px);
+      background: rgba(20,20,20,0.92); color: #fff;
+      padding: 9px 18px; border-radius: 100px;
+      font-size: 13px; font-weight: 600;
+      opacity: 0; transition: opacity 0.18s, transform 0.18s;
+      z-index: 9999; white-space: nowrap; pointer-events: none;
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    }
+    #snack.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* Scrollbar */
+    .marks-scroll::-webkit-scrollbar, .panel-body::-webkit-scrollbar { width: 3px; }
+    .marks-scroll::-webkit-scrollbar-thumb, .panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
 </head>
 <body>
-<header>
-  <h2>Video Marker — Prototype</h2>
-</header>
-<details>
-  <summary>Instructions</summary>
-    <ol>
-      <li>Enter team names</li>
-      <li>Select video to mark</li>
-      <li>Click "Enter Fullscreen" to use overlay buttons (or use the buttons below the video)</li>
-      <li>Use the buttons to mark times (Serve, Home, Away, No Point)</li>
-      <li>Export JSON</li>
-      <li>Go to <a href="https://github.com/tunglinn/simple-gameplay-editor">github</a> and follow those instructions to process the video</li>
-    </ol>
-</details>
 
-<input id="videoFile" type="file" accept="video/*" />
-<button id="importJson" class="small">Import JSON</button>
-<button id="clearBtn" class="small" style="background-color: rgba(200,0,0,0.3);">Clear Marks</button>
-<div id="scoreContainer">
-  <label><input class="teamInput" id="homeNameInput" placeholder="Enter home team name"/></label>
-  <span class="score">Home 0:0 Away</span>
-  <label><input class="teamInput" id="awayNameInput" placeholder="Enter away team name"/></label>
-  
-<button id="fullScreenBtn" class="small" style="background-color: rgba(0,200,0,0.3);">Enter Marking Mode</button>
+<!-- ══════ MAIN VIEW ══════ -->
+<div id="main-view">
+
+  <div id="header">
+    <div class="logo">SPORT<em>●</em>MARK</div>
+
+    <div class="team-wrap">
+      <input class="team-input" id="inp-home" type="text" placeholder="Home Team" maxlength="20" autocomplete="off">
+      <div class="team-color-bar"></div>
+    </div>
+
+    <span class="vs">VS</span>
+
+    <div class="team-wrap away">
+      <input class="team-input away" id="inp-away" type="text" placeholder="Away Team" maxlength="20" autocomplete="off">
+      <div class="team-color-bar"></div>
+    </div>
+  </div>
+
+  <div id="video-area">
+    <video id="main-video" playsinline></video>
+    <div id="placeholder">
+      <div class="ph-ring">📂</div>
+      <p>Open a Video</p>
+      <small>Tap to browse your device</small>
+    </div>
+  </div>
+
+  <nav id="bottom-nav">
+    <button class="nav-btn" id="nav-open" onclick="triggerOpen()">
+      <!-- folder -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      Open
+    </button>
+    <button class="nav-btn" id="nav-editor" onclick="openEditor()">
+      <!-- play -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>
+      Editor
+    </button>
+    <button class="nav-btn" id="nav-review" onclick="openReview()">
+      <!-- list -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Review
+    </button>
+    <button class="nav-btn" id="nav-export" onclick="openExport()">
+      <!-- download -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export
+    </button>
+  </nav>
 </div>
-<div id="videoContainer">
-  <video id="video" controls preload="auto" playsinline></video>
-  <div id="hideController">
-    <div class="controller-overlay" id="controllerOverlay">
-      <div class="utility-bg">
-        <button id="exitFullscreen" class="small">Exit</button>
-        <span class="score" id="white-text">Home 0:0 Away</span>
-        <select id="markerDropdown">
-          <option value="default" selected hidden>Marker list</option>
-        </select>
-      </div>
-      <div class="controller-bg">
-          <div class="dpad">
-            <button class="btn left" id="prevBtn" data-action="left">◀</button>
-            <button class="btn up" id="likeBtn" data-action="up">♡</button>
-            <button class="btn right" id="nextBtn" data-action="right">▶</button>
-          </div>
-          <div class="cluster">
-            <button class="btn abxy-b" id="noPtBtn" data-action="b">NP</button>
-            <button class="btn abxy-y" id="awayPtBtn" data-action="y">A</button>
-            <button class="btn abxy-x" id="homePtBtn" data-action="x">H</button>
-            <button class="btn abxy-a" id="serveBtn" data-action="a">S</button>
-          </div>
-      </div>
+
+<input type="file" id="file-input" accept="video/*">
+
+<!-- ══════ EDITOR VIEW ══════ -->
+<div id="editor-view">
+  <video id="editor-video" playsinline></video>
+
+  <!-- Top bar -->
+  <div id="ed-top">
+    <button class="gl-btn" onclick="closeEditor()" title="Exit (Esc)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+
+    <div id="score-wrap">
+      <div id="score-teams">HOME vs AWAY</div>
+      <div id="score-nums"><span class="sh" id="sc-home">0</span><span class="sep">:</span><span class="sa" id="sc-away">0</span></div>
+    </div>
+
+    <button class="gl-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+    </button>
+    <button class="gl-btn" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+    </button>
+  </div>
+
+  <!-- Recording indicator -->
+  <div id="rec-bar"></div>
+
+  <!-- Flex spacer -->
+  <div id="ed-spacer"></div>
+
+  <!-- Progress bar -->
+  <div id="progress-wrap">
+    <input type="range" id="vid-progress" min="0" max="100" value="0" step="0.05">
+  </div>
+
+  <!-- Controls -->
+  <div id="ed-controls">
+    <!-- D-pad -->
+    <div id="dpad">
+      <div class="dp dp-empty"></div>
+      <button class="dp" id="dp-up" onclick="dUp()" title="Toggle Highlight (U)">⭐</button>
+      <div class="dp dp-empty"></div>
+
+      <button class="dp" onclick="dLeft()" title="← 5s">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>
+      </button>
+      <button class="dp center" id="dp-play" onclick="togglePlay()" title="Play/Pause (Space)">
+        <svg id="play-icon" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      </button>
+      <button class="dp" onclick="dRight()" title="→ 5s">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+      </button>
+
+      <div class="dp dp-empty"></div>
+      <button class="dp" onclick="dDown()" title="Marks List (M)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      </button>
+      <div class="dp dp-empty"></div>
+    </div>
+
+    <!-- Action pad -->
+    <div id="action-pad">
+      <button class="act" id="btn-serve" onclick="pressServe()" title="Serve (S)">SERVE</button>
+      <button class="act" id="btn-home"  onclick="pressPoint('home_point')" disabled title="Home Point (H)">HOME</button>
+      <button class="act" id="btn-nopt"  onclick="pressPoint('no_point')"   disabled title="No Point (N)">NO PT</button>
+      <button class="act" id="btn-away"  onclick="pressPoint('away_point')"  disabled title="Away Point (A)">AWAY</button>
     </div>
   </div>
 </div>
 
-<div class="controls">
-<button id="exportJson" class="small">Export JSON</button>
+<!-- ══════ MARKS MODAL ══════ -->
+<div id="marks-modal">
+  <div class="modal-backdrop" onclick="closeMarks()"></div>
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-head">
+      <span class="modal-title">Marks</span>
+      <button class="modal-x" onclick="closeMarks()">✕</button>
+    </div>
+    <div class="marks-scroll" id="marks-scroll"></div>
+  </div>
 </div>
 
-<div id="marks">
-  <h3>Marks</h3>
-  <div id="marksList"></div>
+<!-- ══════ REVIEW PANEL ══════ -->
+<div class="panel" id="review-panel">
+  <div class="panel-head">
+    <span class="panel-title">Review</span>
+    <button class="panel-x" onclick="closePanel('review-panel')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="panel-body" id="review-body"></div>
 </div>
 
-<script src="js/controls.js"></script>
+<!-- ══════ EXPORT PANEL ══════ -->
+<div class="panel" id="export-panel">
+  <div class="panel-head">
+    <span class="panel-title">Export</span>
+    <button class="panel-x" onclick="closePanel('export-panel')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="panel-body" id="export-body"></div>
+</div>
+
+<!-- Snackbar -->
+<div id="snack"></div>
+
 <script>
-if (navigator.serviceWorker) {
-      navigator.serviceWorker.register (
-        '/simple-gameplay-editor-site/sw.js',
-        {scope: '/simple-gameplay-editor-site/'}
-      )
-    }
-</script>
+// ════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════
+let clips = [];          // completed/in-progress saved clips
+let activeClip = null;   // rally currently being marked
+let history = [[]];      // undo/redo stack (arrays of clips)
+let histIdx = 0;
+let clipSeq = 0;         // unique ID counter
+let videoSrc = '';       // object URL
+let videoFile = null;    // File reference
+let videoLoaded = false;
 
+// ════════════════════════════════════════════════════
+//  DOM
+// ════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const mainVideo   = $('main-video');
+const editorVideo = $('editor-video');
+const fileInput   = $('file-input');
+const editorView  = $('editor-view');
+const recBar      = $('rec-bar');
+const vidProgress = $('vid-progress');
+const playIcon    = $('play-icon');
+const dpUp        = $('dp-up');
+const marksModal  = $('marks-modal');
+const marksScroll = $('marks-scroll');
+const snack       = $('snack');
+
+// ════════════════════════════════════════════════════
+//  TYPE CONFIG
+// ════════════════════════════════════════════════════
+const TC = {
+  serve:      { label: 'SERVE',   color: '#00BFA5', bg: '#E0F7FA' },
+  home_point: { label: 'HOME',    color: '#1A73E8', bg: '#E8F0FE' },
+  away_point: { label: 'AWAY',    color: '#E53935', bg: '#FDECEA' },
+  no_point:   { label: 'NO PT',   color: '#757575', bg: '#F0F0F0' },
+};
+
+// ════════════════════════════════════════════════════
+//  FILE / VIDEO
+// ════════════════════════════════════════════════════
+function triggerOpen() {
+  fileInput.click();
+}
+
+fileInput.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (videoSrc) URL.revokeObjectURL(videoSrc);
+  videoSrc = URL.createObjectURL(file);
+  videoFile = file;
+  mainVideo.src = videoSrc;
+  editorVideo.src = videoSrc;
+  mainVideo.style.display = 'block';
+  $('placeholder').style.display = 'none';
+  videoLoaded = true;
+  fileInput.value = '';
+  toast('Video loaded ✓');
+});
+
+$('video-area').addEventListener('click', () => {
+  if (!videoLoaded) triggerOpen();
+  else { mainVideo.paused ? mainVideo.play() : mainVideo.pause(); }
+});
+
+// ════════════════════════════════════════════════════
+//  EDITOR OPEN / CLOSE
+// ════════════════════════════════════════════════════
+function openEditor() {
+  if (!videoLoaded) { toast('Open a video first'); return; }
+  editorView.classList.add('open');
+  editorVideo.currentTime = mainVideo.currentTime;
+  syncProgress();
+  updateScore();
+  updateActionBtns();
+  updateUndoRedo();
+}
+
+function closeEditor() {
+  editorVideo.pause();
+  mainVideo.currentTime = editorVideo.currentTime;
+  editorView.classList.remove('open');
+  updatePlayIcon();
+}
+
+// ════════════════════════════════════════════════════
+//  PLAYBACK
+// ════════════════════════════════════════════════════
+function togglePlay() {
+  editorVideo.paused ? editorVideo.play() : editorVideo.pause();
+}
+
+function updatePlayIcon() {
+  const paused = editorVideo.paused;
+  playIcon.innerHTML = paused
+    ? '<polygon points="5 3 19 12 5 21 5 3"/>'
+    : '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+}
+
+editorVideo.addEventListener('play',  updatePlayIcon);
+editorVideo.addEventListener('pause', updatePlayIcon);
+editorVideo.addEventListener('ended', updatePlayIcon);
+editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); });
+editorVideo.addEventListener('loadedmetadata', () => { vidProgress.max = editorVideo.duration || 100; });
+
+vidProgress.addEventListener('input', () => {
+  editorVideo.currentTime = parseFloat(vidProgress.value);
+});
+
+function syncProgress() {
+  if (!isNaN(editorVideo.duration) && editorVideo.duration > 0) {
+    vidProgress.max = editorVideo.duration;
+    vidProgress.value = editorVideo.currentTime;
+  }
+}
+
+// ════════════════════════════════════════════════════
+//  D-PAD
+// ════════════════════════════════════════════════════
+function dLeft()  { editorVideo.currentTime = Math.max(0, editorVideo.currentTime - 5); }
+function dRight() { editorVideo.currentTime = Math.min(editorVideo.duration || 99999, editorVideo.currentTime + 5); }
+
+function dUp() {
+  // toggle highlight on activeClip or last completed clip
+  if (activeClip) {
+    activeClip.highlight = !activeClip.highlight;
+    refreshRecBar();
+    toast(activeClip.highlight ? '⭐ Highlight ON' : '☆ Highlight OFF');
+  } else if (clips.length > 0) {
+    const last = [...clips].sort((a,b) => a.start - b.start).pop();
+    const c = clips.find(x => x.id === last.id);
+    c.highlight = !c.highlight;
+    saveHistory();
+    toast(c.highlight ? '⭐ Highlight ON' : '☆ Highlight OFF');
+  } else {
+    toast('No clip to highlight');
+  }
+  syncDpUpStyle();
+  if (marksModal.classList.contains('open')) renderMarks();
+}
+
+function dDown() { openMarks(); }
+
+function syncDpUpStyle() {
+  const on = activeClip && activeClip.highlight;
+  dpUp.classList.toggle('star-on', on);
+}
+
+// ════════════════════════════════════════════════════
+//  ACTION BUTTONS
+// ════════════════════════════════════════════════════
+function pressServe() {
+  if (activeClip) {
+    // Save the in-progress clip as-is (serve type, no end)
+    finishActiveClip(null, 'serve');
+  }
+  activeClip = {
+    id: 'c' + (++clipSeq),
+    start: editorVideo.currentTime,
+    end: null,
+    type: 'serve',
+    highlight: false,
+    order: clipSeq,
+  };
+  saveHistory();
+  refreshRecBar();
+  updateActionBtns();
+  syncDpUpStyle();
+  toast('🟢 Rally started @ ' + fmt(editorVideo.currentTime));
+}
+
+function pressPoint(type) {
+  if (!activeClip) return;
+  finishActiveClip(editorVideo.currentTime, type);
+  saveHistory();
+  updateScore();
+  const labels = { home_point: '🔵 Home Point', away_point: '🔴 Away Point', no_point: '⚫ No Point' };
+  toast(labels[type] || 'Saved');
+}
+
+function finishActiveClip(endTime, type) {
+  activeClip.end  = endTime;
+  activeClip.type = type;
+  clips = clips.filter(c => c.id !== activeClip.id);
+  clips.push({ ...activeClip });
+  activeClip = null;
+  refreshRecBar();
+  updateActionBtns();
+  syncDpUpStyle();
+  if (marksModal.classList.contains('open')) renderMarks();
+}
+
+function updateActionBtns() {
+  const on = !!activeClip;
+  $('btn-home').disabled = !on;
+  $('btn-nopt').disabled = !on;
+  $('btn-away').disabled = !on;
+}
+
+function refreshRecBar() {
+  if (activeClip) {
+    recBar.innerHTML = `<div class="rec-pill"><div class="rec-dot"></div><span>RALLY @ ${fmt(activeClip.start)}${activeClip.highlight ? ' ⭐' : ''}</span></div>`;
+  } else {
+    recBar.innerHTML = '';
+  }
+}
+
+// ════════════════════════════════════════════════════
+//  SCORE
+// ════════════════════════════════════════════════════
+function updateScore() {
+  const t = editorVideo.currentTime;
+  const done = clips.filter(c => c.end !== null && c.end <= t);
+  const h = done.filter(c => c.type === 'home_point').length;
+  const a = done.filter(c => c.type === 'away_point').length;
+  const homeLabel = $('inp-home').value || 'HOME';
+  const awayLabel = $('inp-away').value || 'AWAY';
+  $('score-teams').textContent = homeLabel.toUpperCase() + ' vs ' + awayLabel.toUpperCase();
+  $('sc-home').textContent = h;
+  $('sc-away').textContent = a;
+}
+
+// ════════════════════════════════════════════════════
+//  UNDO / REDO
+// ════════════════════════════════════════════════════
+function saveHistory() {
+  history = history.slice(0, histIdx + 1);
+  history.push(JSON.parse(JSON.stringify(clips)));
+  histIdx = history.length - 1;
+  updateUndoRedo();
+}
+
+function undo() {
+  if (histIdx <= 0) { toast('Nothing to undo'); return; }
+  histIdx--;
+  clips = JSON.parse(JSON.stringify(history[histIdx]));
+  // Cancel any activeClip
+  if (activeClip) { activeClip = null; refreshRecBar(); updateActionBtns(); syncDpUpStyle(); }
+  updateUndoRedo();
+  updateScore();
+  if (marksModal.classList.contains('open')) renderMarks();
+  toast('Undo ↩');
+}
+
+function redo() {
+  if (histIdx >= history.length - 1) { toast('Nothing to redo'); return; }
+  histIdx++;
+  clips = JSON.parse(JSON.stringify(history[histIdx]));
+  updateUndoRedo();
+  updateScore();
+  if (marksModal.classList.contains('open')) renderMarks();
+  toast('Redo ↪');
+}
+
+function updateUndoRedo() {
+  $('btn-undo').disabled = histIdx <= 0;
+  $('btn-redo').disabled = histIdx >= history.length - 1;
+}
+
+// ════════════════════════════════════════════════════
+//  MARKS MODAL
+// ════════════════════════════════════════════════════
+function openMarks() {
+  renderMarks();
+  marksModal.classList.add('open');
+}
+
+function closeMarks() {
+  marksModal.classList.remove('open');
+}
+
+function renderMarks() {
+  const all = [...clips];
+  if (activeClip) all.push(activeClip);
+  all.sort((a,b) => a.start - b.start);
+
+  if (!all.length) {
+    marksScroll.innerHTML = '<div class="marks-empty">No marks yet.<br>Press <strong>SERVE</strong> to start a rally.</div>';
+    return;
+  }
+
+  marksScroll.innerHTML = all.map(c => {
+    const cfg = TC[c.type] || TC.serve;
+    const isAct = activeClip && c.id === activeClip.id;
+    const endBtn = c.end !== null
+      ? `<span class="mk-arrow">→</span><button class="ts-btn" onclick="seekTo(${c.end})">${fmt(c.end)}</button>`
+      : `<span class="ts-btn no-end">in progress…</span>`;
+    return `<div class="mk-item${isAct ? ' is-active' : ''}">
+      <div class="mk-dot" style="background:${cfg.color}"></div>
+      <div class="mk-times">
+        <button class="ts-btn" onclick="seekTo(${c.start})">${fmt(c.start)}</button>
+        ${endBtn}
+      </div>
+      <span class="mk-type" style="color:${cfg.color}">${cfg.label}</span>
+      <button class="mk-star" onclick="toggleHighlight('${c.id}')" title="Toggle Highlight">${c.highlight ? '⭐' : '☆'}</button>
+      ${!isAct ? `<button class="mk-del" onclick="delClip('${c.id}')" title="Delete">🗑</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function seekTo(t) {
+  editorVideo.currentTime = t;
+  closeMarks();
+}
+
+function toggleHighlight(id) {
+  if (activeClip && activeClip.id === id) {
+    activeClip.highlight = !activeClip.highlight;
+    refreshRecBar();
+    syncDpUpStyle();
+  } else {
+    const c = clips.find(x => x.id === id);
+    if (c) { c.highlight = !c.highlight; saveHistory(); }
+  }
+  renderMarks();
+}
+
+function delClip(id) {
+  clips = clips.filter(c => c.id !== id);
+  saveHistory();
+  updateScore();
+  renderMarks();
+  toast('Clip deleted');
+}
+
+// ════════════════════════════════════════════════════
+//  REVIEW PANEL
+// ════════════════════════════════════════════════════
+function openReview() {
+  const body = $('review-body');
+  const sorted = [...clips].sort((a,b) => a.start - b.start);
+
+  if (!sorted.length) {
+    body.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text3);font-family:\'Barlow Condensed\',sans-serif;font-size:16px;font-weight:600;line-height:1.6">No marks yet.<br>Open the Editor to start marking.</div>';
+  } else {
+    body.innerHTML = sorted.map((c, i) => {
+      const cfg = TC[c.type] || TC.serve;
+      const dur = (c.end !== null) ? ` · ${fmtDur(c.end - c.start)}` : '';
+      return `<div class="rv-item">
+        <span class="rv-num">${i + 1}</span>
+        <span class="rv-badge" style="background:${cfg.bg};color:${cfg.color}">${cfg.label}</span>
+        <div class="rv-times">
+          <span class="rv-chip">▶ ${fmt(c.start)}</span>
+          ${c.end !== null ? `<span class="rv-chip">■ ${fmt(c.end)}</span>` : ''}
+          ${dur ? `<span class="rv-chip">${dur}</span>` : ''}
+        </div>
+        ${c.highlight ? '<span class="rv-star">⭐</span>' : ''}
+      </div>`;
+    }).join('');
+  }
+  $('review-panel').classList.add('open');
+}
+
+// ════════════════════════════════════════════════════
+//  EXPORT PANEL
+// ════════════════════════════════════════════════════
+function openExport() {
+  const homeLabel = $('inp-home').value || 'Home';
+  const awayLabel = $('inp-away').value || 'Away';
+  const homeScore = clips.filter(c => c.type === 'home_point').length;
+  const awayScore = clips.filter(c => c.type === 'away_point').length;
+  const highlights = clips.filter(c => c.highlight).length;
+  const nopts    = clips.filter(c => c.type === 'no_point').length;
+  const serves   = clips.filter(c => c.type === 'serve').length; // incomplete
+  const dur = editorVideo.duration || 0;
+
+  $('export-body').innerHTML = `<div class="export-body">
+    <div class="scoreboard">
+      <div class="sb-heads"><span>${homeLabel.toUpperCase()}</span><span>${awayLabel.toUpperCase()}</span></div>
+      <div class="sb-score"><span class="sh">${homeScore}</span><span class="sep">:</span><span class="sa">${awayScore}</span></div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-n" style="color:var(--highlight)">${highlights}</div>
+        <div class="stat-l">Highlights</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-n">${clips.length}</div>
+        <div class="stat-l">Total Clips</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-n" style="color:var(--nopt)">${nopts}</div>
+        <div class="stat-l">No Points</div>
+      </div>
+    </div>
+
+    <div class="meta-card">
+      <div class="meta-row"><span class="meta-l">Video</span><span class="meta-v">${videoFile ? videoFile.name : '—'}</span></div>
+      <div class="meta-row"><span class="meta-l">Duration</span><span class="meta-v">${dur ? fmt(dur) : '—'}</span></div>
+      <div class="meta-row"><span class="meta-l">Home Team</span><span class="meta-v">${homeLabel}</span></div>
+      <div class="meta-row"><span class="meta-l">Away Team</span><span class="meta-v">${awayLabel}</span></div>
+      <div class="meta-row"><span class="meta-l">Incomplete</span><span class="meta-v">${serves}</span></div>
+      <div class="meta-row"><span class="meta-l">Exported</span><span class="meta-v">${new Date().toLocaleString()}</span></div>
+    </div>
+
+    <button class="dl-btn" onclick="doExport()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download JSON
+    </button>
+  </div>`;
+
+  $('export-panel').classList.add('open');
+}
+
+function doExport() {
+  const homeLabel = $('inp-home').value || 'Home';
+  const awayLabel = $('inp-away').value || 'Away';
+  const homeScore = clips.filter(c => c.type === 'home_point').length;
+  const awayScore = clips.filter(c => c.type === 'away_point').length;
+
+  const data = {
+    exportedAt:    new Date().toISOString(),
+    videoFileName: videoFile ? videoFile.name : null,
+    videoDuration: editorVideo.duration || null,
+    homeTeam:      homeLabel,
+    awayTeam:      awayLabel,
+    score:         { home: homeScore, away: awayScore },
+    highlights:    clips.filter(c => c.highlight).length,
+    clips: clips.map(c => ({
+      id:             c.id,
+      order:          c.order,
+      start:          c.start,
+      end:            c.end,
+      startFormatted: fmt(c.start),
+      endFormatted:   c.end !== null ? fmt(c.end) : null,
+      duration:       c.end !== null ? +(c.end - c.start).toFixed(3) : null,
+      type:           c.type,
+      highlight:      c.highlight,
+    })),
+  };
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  const date = new Date().toISOString().slice(0, 10);
+  a.download = `sportmark_${homeLabel}_${awayLabel}_${date}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Downloaded ✓');
+}
+
+// ════════════════════════════════════════════════════
+//  PANELS
+// ════════════════════════════════════════════════════
+function closePanel(id) { $(id).classList.remove('open'); }
+
+// ════════════════════════════════════════════════════
+//  UTILS
+// ════════════════════════════════════════════════════
+function fmt(s) {
+  if (s === null || s === undefined || isNaN(s)) return '--:--';
+  const m   = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  const f   = Math.floor((s % 1) * 10);
+  return `${m}:${String(sec).padStart(2,'0')}.${f}`;
+}
+
+function fmtDur(s) {
+  if (isNaN(s) || s < 0) return '';
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s/60)}m${String(Math.floor(s%60)).padStart(2,'0')}s`;
+}
+
+let snackTimer;
+function toast(msg) {
+  snack.textContent = msg;
+  snack.classList.add('show');
+  clearTimeout(snackTimer);
+  snackTimer = setTimeout(() => snack.classList.remove('show'), 2200);
+}
+
+// ════════════════════════════════════════════════════
+//  KEYBOARD SHORTCUTS
+// ════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (!editorView.classList.contains('open')) return;
+  if (e.target.tagName === 'INPUT') return;
+  const key = e.key;
+  switch (key) {
+    case 'ArrowLeft':  e.preventDefault(); dLeft();  break;
+    case 'ArrowRight': e.preventDefault(); dRight(); break;
+    case 'ArrowUp':    e.preventDefault(); dUp();    break;
+    case 'ArrowDown':  e.preventDefault(); dDown();  break;
+    case ' ':          e.preventDefault(); togglePlay(); break;
+    case 's': case 'S': pressServe(); break;
+    case 'h': case 'H': if (!$('btn-home').disabled) pressPoint('home_point'); break;
+    case 'a': case 'A': if (!$('btn-away').disabled) pressPoint('away_point'); break;
+    case 'n': case 'N': if (!$('btn-nopt').disabled) pressPoint('no_point');   break;
+    case 'm': case 'M': marksModal.classList.contains('open') ? closeMarks() : openMarks(); break;
+    case 'Escape': marksModal.classList.contains('open') ? closeMarks() : closeEditor(); break;
+    case 'z':
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      break;
+    case 'y':
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); redo(); }
+      break;
+  }
+});
+
+// ════════════════════════════════════════════════════
+//  PWA SERVICE WORKER
+// ════════════════════════════════════════════════════
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
+// Init
+updateUndoRedo();
+</script>
 </body>
 </html>

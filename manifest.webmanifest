@@ -1,21 +1,25 @@
 {
-  "name": "Game Editor",
-  "short_name": "GE",
-  "description": "Simple gameplay editor",
-
-  "scope": "/simple-gameplay-editor-site/",
-  "start_url": "/simple-gameplay-editor-site/",
-
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
-
-  "display": "standalone", 
-  
+  "name": "SportMark",
+  "short_name": "SportMark",
+  "description": "Mark and annotate sport videos — serves, points, highlights",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
+  "orientation": "portrait-primary",
+  "categories": ["sports", "utilities"],
   "icons": [
-      {
-        "src": "/simple-gameplay-editor-site/img/icon.png",
-        "type": "image/png",
-        "sizes": "512x512"
-      }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "img/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }
