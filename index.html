@@ -169,12 +169,19 @@
     /* Top bar */
     #ed-top {
       position: relative; z-index: 5;
-      display: flex; align-items: center;
+      display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
       padding: 10px 14px; gap: 10px;
       background: linear-gradient(to bottom, rgba(0,0,0,0.72) 0%, transparent 100%);
       pointer-events: none;
     }
     #ed-top > * { pointer-events: auto; }
+    .ed-top-side {
+      display: flex; align-items: center; gap: 10px;
+      min-width: 0;
+    }
+    #ed-top-left { justify-self: start; }
+    #ed-top-right { justify-self: end; justify-content: flex-end; }
 
     .gl-btn {
       width: 38px; height: 38px; border-radius: 50%;
@@ -188,7 +195,7 @@
     .gl-btn:disabled { opacity: 0.35; }
     .gl-btn svg { width: 17px; height: 17px; stroke-width: 2.2; }
 
-    #score-wrap { flex: 1; text-align: center; }
+    #score-wrap { text-align: center; }
     #score-teams { font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.55); letter-spacing: 1.5px; text-transform: uppercase; }
     #score-nums { font-family: 'Barlow Condensed', sans-serif; font-size: 34px; font-weight: 900; line-height: 1; letter-spacing: 1px; color: #fff; }
     #score-nums .sh { color: #82b4ff; }
@@ -197,9 +204,8 @@
 
     /* Active clip indicator */
     #rec-bar {
-      position: relative; z-index: 5;
-      display: flex; align-items: center; justify-content: center;
-      padding: 4px 14px; min-height: 32px;
+      display: flex; align-items: center; justify-content: flex-end;
+      min-width: 0;
     }
     .rec-pill {
       display: flex; align-items: center; gap: 7px;
@@ -209,7 +215,11 @@
       border-radius: 100px; padding: 5px 14px;
       color: #4ECDC4;
       font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+      max-width: min(44vw, 260px);
+      white-space: nowrap;
+      overflow: hidden;
     }
+    .rec-pill span { overflow: hidden; text-overflow: ellipsis; }
     .rec-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--serve); animation: blink 1.1s ease-in-out infinite; }
     @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 
@@ -217,20 +227,70 @@
     #ed-spacer { flex: 1; }
 
     /* Progress */
-    #progress-wrap { position: relative; z-index: 5; padding: 0 16px 6px; }
-    #vid-progress {
-      width: 100%; height: 3px; -webkit-appearance: none; appearance: none;
-      background: rgba(255,255,255,0.18); border-radius: 2px; outline: none; cursor: pointer;
+    #progress-wrap {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 6;
+      padding: 0 16px calc(10px + env(safe-area-inset-bottom, 0px));
+      background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.28) 65%, transparent 100%);
     }
-    #vid-progress::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; margin-top: -5.5px; }
-    #vid-progress::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; }
-    #vid-progress::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; cursor: pointer; }
+    #vid-progress {
+      --progress-pct: 0%;
+      width: 100%;
+      height: 12px;
+      -webkit-appearance: none;
+      appearance: none;
+      border: none;
+      border-radius: 999px;
+      outline: none;
+      cursor: pointer;
+      background: linear-gradient(
+        to right,
+        rgba(255,255,255,0.96) 0%,
+        rgba(255,255,255,0.96) var(--progress-pct),
+        rgba(255,255,255,0.22) var(--progress-pct),
+        rgba(255,255,255,0.22) 100%
+      );
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
+    }
+    #vid-progress::-webkit-slider-runnable-track {
+      height: 12px;
+      border-radius: 999px;
+      background: transparent;
+    }
+    #vid-progress::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 0;
+      height: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    #vid-progress::-moz-range-track {
+      height: 12px;
+      border: none;
+      border-radius: 999px;
+      background: transparent;
+    }
+    #vid-progress::-moz-range-progress {
+      height: 12px;
+      border-radius: 999px;
+      background: transparent;
+    }
+    #vid-progress::-moz-range-thumb {
+      width: 0;
+      height: 0;
+      border: 0;
+      background: transparent;
+    }
 
     /* Controls */
     #ed-controls {
       position: relative; z-index: 5;
       display: flex; align-items: center; justify-content: space-around;
-      padding: 10px 20px 28px; gap: 20px;
+      padding: 10px 20px 42px; gap: 10em;
       background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%);
     }
 
@@ -484,25 +544,27 @@
 
   <!-- Top bar -->
   <div id="ed-top">
-    <button class="gl-btn" onclick="closeEditor()" title="Exit (Esc)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
+    <div class="ed-top-side" id="ed-top-left">
+      <button class="gl-btn" onclick="closeEditor()" title="Exit (Esc)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
 
     <div id="score-wrap">
       <div id="score-teams">HOME vs AWAY</div>
       <div id="score-nums"><span class="sh" id="sc-home">0</span><span class="sep">:</span><span class="sa" id="sc-away">0</span></div>
     </div>
 
-    <button class="gl-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-    </button>
-    <button class="gl-btn" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
-    </button>
+    <div class="ed-top-side" id="ed-top-right">
+      <div id="rec-bar"></div>
+      <button class="gl-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+      </button>
+      <button class="gl-btn" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+      </button>
+    </div>
   </div>
-
-  <!-- Recording indicator -->
-  <div id="rec-bar"></div>
 
   <!-- Flex spacer -->
   <div id="ed-spacer"></div>
@@ -689,16 +751,25 @@ editorVideo.addEventListener('play',  updatePlayIcon);
 editorVideo.addEventListener('pause', updatePlayIcon);
 editorVideo.addEventListener('ended', updatePlayIcon);
 editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); });
-editorVideo.addEventListener('loadedmetadata', () => { vidProgress.max = editorVideo.duration || 100; });
+editorVideo.addEventListener('loadedmetadata', () => {
+  vidProgress.max = editorVideo.duration || 100;
+  syncProgress();
+});
 
 vidProgress.addEventListener('input', () => {
   editorVideo.currentTime = parseFloat(vidProgress.value);
+  syncProgress();
 });
 
 function syncProgress() {
   if (!isNaN(editorVideo.duration) && editorVideo.duration > 0) {
     vidProgress.max = editorVideo.duration;
     vidProgress.value = editorVideo.currentTime;
+    const pct = (editorVideo.currentTime / editorVideo.duration) * 100;
+    vidProgress.style.setProperty('--progress-pct', `${pct}%`);
+  } else {
+    vidProgress.value = 0;
+    vidProgress.style.setProperty('--progress-pct', '0%');
   }
 }
 
