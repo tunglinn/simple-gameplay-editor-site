@@ -314,14 +314,14 @@
     #action-pad { display: grid; grid-template-columns: 86px 76px; grid-template-rows: 46px 46px 46px; gap: 5px; opacity: 50%;}
 
     .act {
-      border: none; border-radius: 10px; color: #fff;
+      border: solid; border-radius: 10px; color: #fff;
       font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 800; letter-spacing: 1px;
       cursor: pointer; text-transform: uppercase;
       display: flex; align-items: center; justify-content: center;
       transition: transform 0.1s, opacity var(--trans);
     }
     .act:active:not(:disabled) { transform: scale(0.88); }
-    .act:disabled { opacity: 0.28; cursor: default; }
+    .act:disabled { opacity: 0.28; cursor: default; border:none; }
 
     #btn-serve { grid-row: 1/4; grid-column: 1; background: var(--serve); border-radius: 12px; font-size: 17px; letter-spacing: 1.5px; }
     #btn-home  { grid-row: 1; grid-column: 2; background: var(--home); }
@@ -854,6 +854,7 @@ function updateActionBtns() {
   $('btn-home').disabled = !on;
   $('btn-nopt').disabled = !on;
   $('btn-away').disabled = !on;
+  $('btn-serve').disabled = on;
 }
 
 function refreshRecBar() {
