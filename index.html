@@ -377,7 +377,7 @@
 
     .mk-arrow { font-size: 11px; color: var(--text3); }
 
-    .mk-type { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.5px; flex-shrink: 0; }
+    .mk-type { font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.5px; flex-shrink: 0; border: none; background: transparent; cursor: pointer;}
 
     .mk-star { background: none; border: none; cursor: pointer; font-size: 18px; padding: 2px; transition: transform 0.12s; }
     .mk-star:active { transform: scale(1.4); }
@@ -945,17 +945,34 @@ function renderMarks() {
     const endBtn = c.end !== null
       ? `<span class="mk-arrow">→</span><button class="ts-btn" onclick="seekTo(${c.end})">${fmt(c.end)}</button>`
       : `<span class="ts-btn no-end">in progress…</span>`;
+
+    const typeOptions = Object.entries(TC)
+      .map(([key, val]) =>
+        `<option value="${key}" ${c.type === key ? 'selected' : ''}>${val.label}</option>`
+      ).join('');
+
     return `<div class="mk-item${isAct ? ' is-active' : ''}">
       <div class="mk-dot" style="background:${cfg.color}"></div>
       <div class="mk-times">
         <button class="ts-btn" onclick="seekTo(${c.start})">${fmt(c.start)}</button>
         ${endBtn}
       </div>
-      <span class="mk-type" style="color:${cfg.color}">${cfg.label}</span>
+      <select class="mk-type" style="color:${cfg.color}"
+              onchange="changeClipType('${c.id}', this.value)">
+        ${typeOptions}
+      </select>
       <button class="mk-star" onclick="toggleHighlight('${c.id}')" title="Toggle Highlight">${c.highlight ? '⭐' : '☆'}</button>
       ${!isAct ? `<button class="mk-del" onclick="delClip('${c.id}')" title="Delete">🗑</button>` : ''}
     </div>`;
   }).join('');
+}
+
+function changeClipType(id, newType) {
+  const clip = clips.find(c => c.id === id); // adjust to however you store clips
+  if (clip && TC[newType]) {
+    clip.type = newType;
+    renderMarks(); // or whatever re-renders the list
+  }
 }
 
 function seekTo(t) {
