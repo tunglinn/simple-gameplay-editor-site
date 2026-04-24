@@ -491,14 +491,14 @@
     .header-btn svg { width: 15px; height: 15px; stroke-width: 2.2; }
 
     /* Reset confirm modal */
-    #reset-modal {
+    #reset-modal, #import-modal {
       position: fixed; inset: 0; z-index: 400;
       display: flex; align-items: center; justify-content: center;
       padding: 24px;
       visibility: hidden; opacity: 0;
       transition: opacity 0.18s ease, visibility 0.18s;
     }
-    #reset-modal.open { visibility: visible; opacity: 1; }
+    #reset-modal.open, #import-modal.open { visibility: visible; opacity: 1; }
     .reset-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
     .reset-card {
       position: relative; background: #fff; border-radius: 18px;
@@ -507,7 +507,7 @@
       transform: scale(0.94);
       transition: transform 0.18s ease;
     }
-    #reset-modal.open .reset-card { transform: scale(1); }
+    #reset-modal.open .reset-card, #import-modal.open .reset-card { transform: scale(1); }
     .reset-icon {
       width: 48px; height: 48px; border-radius: 50%;
       background: #FDECEA; display: flex; align-items: center; justify-content: center;
@@ -551,6 +551,9 @@
       <div class="team-color-bar"></div>
     </div>
 
+    <button class="header-btn" onclick="triggerImport()" title="Import Markers">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </button>
     <button class="header-btn" onclick="openResetModal()" title="Reset">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
     </button>
@@ -590,6 +593,7 @@
 </div>
 
 <input type="file" id="file-input" accept="video/*">
+<input type="file" id="import-input" accept=".json,application/json">
 
 <!-- ══════ EDITOR VIEW ══════ -->
 <div id="editor-view">
@@ -695,6 +699,24 @@
     </button>
   </div>
   <div class="panel-body" id="export-body"></div>
+</div>
+
+<!-- Import Confirm Modal -->
+<div id="import-modal">
+  <div class="reset-backdrop" onclick="closeImportModal()"></div>
+  <div class="reset-card">
+    <div class="reset-icon" style="background:#E8F0FE">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#1A73E8" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </div>
+    <div class="reset-title">Replace Markers?</div>
+    <div class="reset-msg">
+      <strong id="import-new-count"></strong> markers from <em id="import-filename" style="word-break:break-all"></em> will replace your <strong id="import-existing-count"></strong> existing markers. Team names will also be updated.
+    </div>
+    <div class="reset-btns">
+      <button class="reset-btn cancel" onclick="closeImportModal()">Cancel</button>
+      <button class="reset-btn confirm" style="background:var(--home)" onclick="confirmImport()">Import</button>
+    </div>
+  </div>
 </div>
 
 <!-- Reset Confirm Modal -->
@@ -1251,6 +1273,88 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
+}
+
+// ════════════════════════════════════════════════════
+//  IMPORT
+// ════════════════════════════════════════════════════
+let pendingImport = null;
+
+function triggerImport() {
+  $('import-input').click();
+}
+
+$('import-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $('import-input').value = '';
+
+  const reader = new FileReader();
+  reader.onload = evt => {
+    let data;
+    try { data = JSON.parse(evt.target.result); }
+    catch { toast('Invalid JSON file'); return; }
+
+    if (!Array.isArray(data.clips) || data.clips.length === 0) {
+      toast('No markers found in file');
+      return;
+    }
+
+    if (clips.length > 0 || activeClip) {
+      pendingImport = data;
+      const existingCount = clips.length + (activeClip ? 1 : 0);
+      $('import-existing-count').textContent = existingCount;
+      $('import-new-count').textContent = data.clips.length;
+      $('import-filename').textContent = data.videoFileName || file.name;
+      $('import-modal').classList.add('open');
+    } else {
+      applyImport(data);
+    }
+  };
+  reader.readAsText(file);
+});
+
+function closeImportModal() {
+  $('import-modal').classList.remove('open');
+  pendingImport = null;
+}
+
+function confirmImport() {
+  if (!pendingImport) return;
+  const data = pendingImport;
+  closeImportModal();
+  applyImport(data);
+}
+
+function applyImport(data) {
+  activeClip = null;
+
+  clips = data.clips.map(c => ({
+    id:        c.id,
+    start:     c.start,
+    end:       c.end,
+    type:      c.type,
+    highlight: !!c.highlight,
+    order:     c.order,
+  }));
+
+  clipSeq = clips.reduce((m, c) => Math.max(m, c.order || 0), 0);
+
+  if (data.homeTeam) $('inp-home').value = data.homeTeam;
+  if (data.awayTeam) $('inp-away').value = data.awayTeam;
+
+  history = [[]];
+  histIdx = 0;
+  saveHistory();
+
+  refreshRecBar();
+  updateActionBtns();
+  updateUndoRedo();
+  updateScore();
+  syncDpUpStyle();
+  if (marksModal.classList.contains('open')) renderMarks();
+
+  toast(`Imported ${clips.length} marker${clips.length !== 1 ? 's' : ''} ✓`);
 }
 
 // ════════════════════════════════════════════════════
