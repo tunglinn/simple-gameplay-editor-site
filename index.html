@@ -478,6 +478,54 @@
     }
     #snack.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+    /* Header icon button */
+    .header-btn {
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text2);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; flex-shrink: 0;
+      transition: background var(--trans), color var(--trans), border-color var(--trans);
+    }
+    .header-btn:active { background: var(--surface2); color: var(--danger); border-color: var(--danger); }
+    .header-btn svg { width: 15px; height: 15px; stroke-width: 2.2; }
+
+    /* Reset confirm modal */
+    #reset-modal {
+      position: fixed; inset: 0; z-index: 400;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      visibility: hidden; opacity: 0;
+      transition: opacity 0.18s ease, visibility 0.18s;
+    }
+    #reset-modal.open { visibility: visible; opacity: 1; }
+    .reset-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+    .reset-card {
+      position: relative; background: #fff; border-radius: 18px;
+      padding: 24px 20px 20px; width: 100%; max-width: 320px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+      transform: scale(0.94);
+      transition: transform 0.18s ease;
+    }
+    #reset-modal.open .reset-card { transform: scale(1); }
+    .reset-icon {
+      width: 48px; height: 48px; border-radius: 50%;
+      background: #FDECEA; display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 14px;
+    }
+    .reset-icon svg { width: 22px; height: 22px; stroke: var(--danger); stroke-width: 2.2; }
+    .reset-title { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-align: center; color: var(--text); margin-bottom: 6px; }
+    .reset-msg { font-size: 13px; color: var(--text2); text-align: center; line-height: 1.5; margin-bottom: 20px; }
+    .reset-btns { display: flex; gap: 10px; }
+    .reset-btn {
+      flex: 1; padding: 12px; border-radius: var(--radius-sm); border: none;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 800;
+      letter-spacing: 0.5px; cursor: pointer; transition: opacity var(--trans);
+    }
+    .reset-btn:active { opacity: 0.75; }
+    .reset-btn.cancel { background: var(--surface); color: var(--text); }
+    .reset-btn.confirm { background: var(--danger); color: #fff; }
+
     /* Scrollbar */
     .marks-scroll::-webkit-scrollbar, .panel-body::-webkit-scrollbar { width: 3px; }
     .marks-scroll::-webkit-scrollbar-thumb, .panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -502,6 +550,10 @@
       <input class="team-input away" id="inp-away" type="text" placeholder="Away Team" maxlength="20" autocomplete="off">
       <div class="team-color-bar"></div>
     </div>
+
+    <button class="header-btn" onclick="openResetModal()" title="Reset">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </button>
   </div>
 
   <div id="video-area">
@@ -643,6 +695,22 @@
     </button>
   </div>
   <div class="panel-body" id="export-body"></div>
+</div>
+
+<!-- Reset Confirm Modal -->
+<div id="reset-modal">
+  <div class="reset-backdrop" onclick="closeResetModal()"></div>
+  <div class="reset-card">
+    <div class="reset-icon">
+      <svg viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </div>
+    <div class="reset-title">Reset Everything?</div>
+    <div class="reset-msg">This will clear the loaded video, all markers, and team names. This cannot be undone.</div>
+    <div class="reset-btns">
+      <button class="reset-btn cancel" onclick="closeResetModal()">Cancel</button>
+      <button class="reset-btn confirm" onclick="doReset()">Reset</button>
+    </div>
+  </div>
 </div>
 
 <!-- Snackbar -->
@@ -1183,6 +1251,62 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
+}
+
+// ════════════════════════════════════════════════════
+//  RESET
+// ════════════════════════════════════════════════════
+function openResetModal() {
+  $('reset-modal').classList.add('open');
+}
+
+function closeResetModal() {
+  $('reset-modal').classList.remove('open');
+}
+
+function doReset() {
+  closeResetModal();
+
+  // Close any open views first
+  editorVideo.pause();
+  mainVideo.pause();
+  editorView.classList.remove('open');
+  closeMarks();
+  closePanel('review-panel');
+  closePanel('export-panel');
+
+  // Clear state
+  activeClip = null;
+  clips = [];
+  history = [[]];
+  histIdx = 0;
+  clipSeq = 0;
+
+  // Release video
+  if (videoSrc) { URL.revokeObjectURL(videoSrc); videoSrc = ''; }
+  videoFile = null;
+  videoLoaded = false;
+
+  mainVideo.removeAttribute('src');
+  mainVideo.load();
+  mainVideo.style.display = 'none';
+  editorVideo.removeAttribute('src');
+  editorVideo.load();
+  $('placeholder').style.display = '';
+
+  // Clear team names
+  $('inp-home').value = '';
+  $('inp-away').value = '';
+
+  // Reset UI
+  refreshRecBar();
+  updateActionBtns();
+  updateUndoRedo();
+  updateScore();
+  updatePlayIcon();
+  syncProgress();
+
+  toast('Reset complete');
 }
 
 // Init
