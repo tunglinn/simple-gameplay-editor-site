@@ -360,6 +360,7 @@
     .mk-item {
       display: flex; align-items: center; gap: 10px;
       padding: 10px 16px; border-bottom: 1px solid var(--border);
+      cursor: pointer;
     }
     .mk-item.is-active { background: rgba(0,191,165,0.04); }
 
@@ -951,7 +952,7 @@ function renderMarks() {
         `<option value="${key}" ${c.type === key ? 'selected' : ''}>${val.label}</option>`
       ).join('');
 
-    return `<div class="mk-item${isAct ? ' is-active' : ''}">
+    return `<div class="mk-item${isAct ? ' is-active' : ''}" onclick="seekTo(${c.start})">
       <div class="mk-dot" style="background:${cfg.color}"></div>
       <div class="mk-times">
         <button class="ts-btn" onclick="seekTo(${c.start})">${fmt(c.start)}</button>
