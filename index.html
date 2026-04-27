@@ -629,7 +629,7 @@
   </div>
 
   <div id="video-area">
-    <video id="main-video" playsinline></video>
+    <video id="main-video" playsinline preload="metadata"></video>
     <div id="placeholder">
       <div class="ph-ring">📂</div>
       <p>Open a Video</p>
@@ -666,7 +666,7 @@
 
 <!-- ══════ EDITOR VIEW ══════ -->
 <div id="editor-view">
-  <video id="editor-video" playsinline></video>
+  <video id="editor-video" playsinline preload="none"></video>
 
   <!-- Top bar -->
   <div id="ed-top">
@@ -860,7 +860,15 @@ fileInput.addEventListener('change', e => {
   videoSrc = URL.createObjectURL(file);
   videoFile = file;
   mainVideo.src = videoSrc;
-  editorVideo.src = videoSrc;
+  // Don't assign editorVideo.src here. On Android, pointing two <video> elements at
+  // the same file at the same time forces the browser to open two hardware codec
+  // pipelines simultaneously. Android devices expose only a small fixed pool of
+  // hardware decoder instances; competing for that pool causes one element to stall
+  // or freeze a few seconds into playback. Instead, editorVideo.src is assigned
+  // lazily the first time the editor is opened (see openEditor below), so only one
+  // decoder is ever active at a time.
+  editorVideo.removeAttribute('src');
+  editorVideo.load(); // resets readyState to HAVE_NOTHING, releasing any old decoder
   mainVideo.style.display = 'block';
   $('placeholder').style.display = 'none';
   videoLoaded = true;
@@ -879,11 +887,28 @@ $('video-area').addEventListener('click', () => {
 function openEditor() {
   if (!videoLoaded) { toast('Open a video first'); return; }
   editorView.classList.add('open');
-  editorVideo.currentTime = mainVideo.currentTime;
-  syncProgress();
   updateScore();
   updateActionBtns();
   updateUndoRedo();
+
+  if (editorVideo.readyState < 1) {
+    // editorVideo has no src yet (first open, or after loading a new file).
+    // Assign the src now — only one decoder is running because mainVideo is
+    // paused while the editor is visible. Once the browser has parsed the file
+    // header (duration, dimensions, codec tables) it fires 'loadedmetadata',
+    // at which point we sync the playhead to wherever mainVideo was.
+    // { once: true } auto-removes the listener after it fires once.
+    editorVideo.src = videoSrc;
+    editorVideo.addEventListener('loadedmetadata', () => {
+      editorVideo.currentTime = mainVideo.currentTime;
+      vidProgress.max = editorVideo.duration || 100;
+      syncProgress();
+    }, { once: true });
+  } else {
+    // editorVideo already has the current video loaded — just sync the playhead.
+    editorVideo.currentTime = mainVideo.currentTime;
+    syncProgress();
+  }
 }
 
 function closeEditor() {
@@ -1672,15 +1697,16 @@ async function doWebCodecsExport() {
         console.error('[WC] ENCODER ERROR at clip', encErrClip, '—', e.name, e.message, e);
       },
     });
-    // Codec string format: 'avc1.PPCCLL'
-    //   PP = profile (64 = High Profile — best compression quality)
-    //   CC = constraint flags (00 = none)
-    //   LL = level in hex (28 hex = 40 decimal = Level 4.0)
-    // ⚠ WARNING: H.264 Level 4.0 supports a maximum of 1080p @ 30 fps.
-    // A 4K source video (3840×2160) or 60fps source will likely fail or encode
-    // incorrectly with this config. Level 5.1 ('avc1.640033') supports 4K@30fps.
+    // wcPickH264Codec (defined below) selects the minimum H.264 level that can
+    // handle this video's resolution and frame rate. H.264 levels cap the maximum
+    // macroblocks-per-second (MBs/sec) a decoder or encoder must handle, where each
+    // macroblock covers 16×16 pixels. Choosing too low a level makes the encoder
+    // reject or corrupt frames:
+    //   Level 4.0 (avc1.640028) — up to ~245 760 MBs/sec → 1080p @ 30 fps
+    //   Level 5.0 (avc1.640032) — up to ~589 824 MBs/sec → ~1440p @ 30 fps
+    //   Level 5.1 (avc1.640033) — up to ~983 040 MBs/sec → 4K @ 30 fps
     encoder.configure({
-      codec: 'avc1.640028', // H.264 High Profile, Level 4.0, caps at 1080p @ 30fps
+      codec: wcPickH264Codec(width, height, fps),
       width, height,
       bitrate: getExportBitrate(width, height, fps),
       framerate: fps,
@@ -1706,8 +1732,19 @@ async function doWebCodecsExport() {
     // resolution, and encoding settings. Without them the decoder cannot start.
     // wcBuildDecoderConfig reads them from the avcC box in the MP4 container.
     const decoderConfig = wcBuildDecoderConfig(videoTrack, mp4file);
-    if (!decoderConfig.description)
-      throw new Error('Could not read codec config from video. Only H.264/AVC files are supported.');
+    if (!decoderConfig.description) {
+      // description is the raw AVCDecoderConfigurationRecord or
+      // HEVCDecoderConfigurationRecord bytes that tell the decoder about the
+      // stream's profile, resolution, and parameter sets (SPS/PPS/VPS).
+      // If it's missing here, wcBuildDecoderConfig could not find a recognised
+      // codec config box — either the file uses AV1, VP9, or a codec whose
+      // container structure we don't yet handle.
+      const codec = videoTrack.codec || '';
+      if (codec.startsWith('av01')) {
+        throw new Error('AV1 video is not supported by the WebCodecs export engine — convert the file to H.264 or H.265 first.');
+      }
+      throw new Error('Could not read codec config from video. H.264 (AVC) and H.265 (HEVC) files are supported. If the file is HEVC and this still fails, try the MediaRecorder engine.');
+    }
 
     console.log('[WC] source codec:', videoTrack.codec, `${width}×${height}`, fps + 'fps',
       videoSamples.length + ' samples', 'decoderConfig:', decoderConfig);
@@ -2346,9 +2383,19 @@ function wcBuildDecoderConfig(videoTrack, mp4file) {
     const trak = mp4file.getTrackById(videoTrack.id);
     const entry = trak.mdia.minf.stbl.stsd.entries[0];
     if (entry.avcC) {
-      // Manually serialize AVCDecoderConfigurationRecord from the parsed box
-      // properties — MP4Box.DataStream is not exposed in the browser UMD build.
+      // H.264/AVC: codec parameters live in the avcC box as SPS + PPS NAL units.
+      // MP4Box.DataStream is not exposed in the browser UMD build, so we manually
+      // serialize the AVCDecoderConfigurationRecord bytes ourselves.
       config.description = wcSerializeAvcC(entry.avcC);
+    } else if (entry.hvcC) {
+      // H.265/HEVC: codec parameters live in the hvcC box as VPS + SPS + PPS NAL
+      // unit arrays. Android phones often record in HEVC (it's roughly 40% smaller
+      // than H.264 at the same quality), so this path handles the common case of
+      // phone footage that fails with avcC-only code.
+      // The output of the overall pipeline is still H.264 (the VideoEncoder is
+      // always configured with an avc1 codec), so we're decoding HEVC → re-encoding
+      // as H.264, which Chrome/Android supports via hardware HEVC decode.
+      config.description = wcSerializeHvcC(entry.hvcC);
     }
   } catch (e) {
     console.error('wcBuildDecoderConfig:', e);
@@ -2384,6 +2431,100 @@ function wcSerializeAvcC(box) {
     buf.set(p.nalu, o); o += p.nalu.byteLength;
   }
   return buf;
+}
+
+function wcSerializeHvcC(box) {
+  // Serialize HEVCDecoderConfigurationRecord (ISO 14496-15, Section 8.3.3.1).
+  // The structure is analogous to wcSerializeAvcC but for H.265/HEVC, where the
+  // parameter sets come in three flavours stored as typed NAL unit arrays:
+  //   VPS (Video Parameter Set)  — NAL unit type 32
+  //   SPS (Sequence Parameter Set) — NAL unit type 33
+  //   PPS (Picture Parameter Set) — NAL unit type 34
+  // MP4Box parses the hvcC box and exposes these as box.NaluArrays, a list of
+  // { completeness, nal_unit_type, units: [{ data: Uint8Array }] }.
+  const naluArrays = box.NaluArrays || [];
+
+  // Pre-compute the total byte length of the output buffer.
+  // Fixed header = 23 bytes (see below for field breakdown) + 1 byte numOfArrays.
+  let size = 23 + 1;
+  for (const arr of naluArrays) {
+    size += 1 + 2; // 1 byte (completeness+type) + 2 bytes (numNalus count)
+    for (const unit of arr.units) {
+      size += 2 + unit.data.byteLength; // 2-byte length prefix + NAL unit payload
+    }
+  }
+
+  const buf  = new Uint8Array(size);
+  const view = new DataView(buf.buffer);
+  let o = 0;
+
+  // ── 23-byte fixed header ────────────────────────────────────────────────────
+  buf[o++] = box.configurationVersion || 1;
+
+  // Byte 1: general_profile_space (2 bits) | general_tier_flag (1 bit) | general_profile_idc (5 bits)
+  buf[o++] = ((box.general_profile_space & 0x3) << 6) |
+             ((box.general_tier_flag     & 0x1) << 5) |
+              (box.general_profile_idc   & 0x1f);
+
+  // Bytes 2–5: general_profile_compatibility_flags (32 bits, big-endian)
+  view.setUint32(o, box.general_profile_compatibility_flags || 0, false); o += 4;
+
+  // Bytes 6–11: general_constraint_indicator_flags (48 bits).
+  // MP4Box reads these as a Uint8Array of 6 bytes; copy them directly.
+  const gcif = box.general_constraint_indicator_flags;
+  if (gcif && gcif.length === 6) buf.set(gcif, o);
+  o += 6;
+
+  buf[o++] = box.general_level_idc || 0;
+
+  // Bytes 13–14: reserved (4 bits = 0xF) | min_spatial_segmentation_idc (12 bits)
+  view.setUint16(o, 0xf000 | (box.min_spatial_segmentation_idc & 0x0fff), false); o += 2;
+
+  // Bytes 15–19: single-byte fields, each with reserved high bits set to 1.
+  buf[o++] = 0xfc | (box.parallelismType       & 0x3);
+  buf[o++] = 0xfc | (box.chroma_format_idc     & 0x3);
+  buf[o++] = 0xf8 | (box.bit_depth_luma_minus8   & 0x7);
+  buf[o++] = 0xf8 | (box.bit_depth_chroma_minus8 & 0x7);
+
+  // Bytes 20–21: avgFrameRate (16 bits, big-endian)
+  view.setUint16(o, box.avgFrameRate || 0, false); o += 2;
+
+  // Byte 22: constantFrameRate (2) | numTemporalLayers (3) | temporalIdNested (1) | lengthSizeMinusOne (2)
+  buf[o++] = ((box.constantFrameRate  & 0x3) << 6) |
+             ((box.numTemporalLayers  & 0x7) << 3) |
+             ((box.temporalIdNested   & 0x1) << 2) |
+              (box.lengthSizeMinusOne & 0x3);
+
+  // ── NAL unit arrays ─────────────────────────────────────────────────────────
+  buf[o++] = naluArrays.length; // numOfArrays
+  for (const arr of naluArrays) {
+    // Byte: array_completeness (1 bit) | reserved 0 (1 bit) | NAL_unit_type (6 bits)
+    buf[o++] = ((arr.completeness & 0x1) << 7) | (arr.nal_unit_type & 0x3f);
+    view.setUint16(o, arr.units.length, false); o += 2;
+    for (const unit of arr.units) {
+      const data = unit.data instanceof Uint8Array
+        ? unit.data
+        : new Uint8Array(unit.data.buffer || unit.data);
+      view.setUint16(o, data.byteLength, false); o += 2;
+      buf.set(data, o); o += data.byteLength;
+    }
+  }
+
+  return buf;
+}
+
+function wcPickH264Codec(width, height, fps) {
+  // H.264 defines levels by the maximum macroblocks-per-second (MBs/sec) a
+  // decoder/encoder must handle, where each macroblock covers 16×16 pixels.
+  // Choosing a level lower than the video requires causes the encoder to
+  // reject or corrupt frames silently.
+  //   Level 4.0 (0x28): ≤ 245 760 MBs/sec — 1920×1080 @ 30 fps
+  //   Level 5.0 (0x32): ≤ 589 824 MBs/sec — ~2560×1440 @ 30 fps
+  //   Level 5.1 (0x33): ≤ 983 040 MBs/sec — 3840×2160 @ 30 fps (4K)
+  const mbsPerSec = Math.ceil(width / 16) * Math.ceil(height / 16) * fps;
+  if (mbsPerSec > 589_824) return 'avc1.640033'; // Level 5.1 — 4K
+  if (mbsPerSec > 245_760) return 'avc1.640032'; // Level 5.0 — 1440p or 1080p60
+  return 'avc1.640028';                           // Level 4.0 — 1080p30 and below
 }
 
 // Init
