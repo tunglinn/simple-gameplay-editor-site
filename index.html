@@ -1534,10 +1534,15 @@ function doReset() {
 let cancelExport = false;
 
 async function doWebCodecsExport() {
+  // WebCodecs is a low-level browser API for encoding/decoding video and audio.
+  // It gives direct access to the hardware codec (GPU) rather than going through
+  // the browser's high-level video element. Only available in Chrome/Edge.
   if (!('VideoEncoder' in window) || !('VideoDecoder' in window)) {
     toast('WebCodecs not supported — use Chrome or Edge');
     return;
   }
+  // Only export clips that are fully bounded (have both a start AND end time).
+  // Sort chronologically so clips are concatenated in playback order.
   const exportClips = clips.filter(c => c.end !== null).sort((a,b) => a.start - b.start);
   if (!exportClips.length) { toast('No complete clips to export'); return; }
   if (!videoFile) { toast('No video loaded'); return; }
@@ -1565,6 +1570,11 @@ async function doWebCodecsExport() {
 
   try {
     setProgress(2, 'Loading muxer…');
+    // A muxer (multiplexer) combines multiple media streams into one container file.
+    // Think of MP4 as a ZIP file: the muxer is the tool that packs the encoded video
+    // chunks and encoded audio chunks together, writing the MP4 file structure
+    // (track headers, timing tables, codec metadata, etc.) around them.
+    // mp4-muxer is a pure-JS library that does this entirely in the browser.
     let Muxer, ArrayBufferTarget;
     try {
       ({ Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm'));
@@ -1573,10 +1583,21 @@ async function doWebCodecsExport() {
     }
     if (cancelExport) return;
 
+    // Read the entire video file into memory as a raw byte array (ArrayBuffer).
+    // This is needed because MP4Box.js (the parser below) operates on raw bytes.
+    // ⚠ WARNING (memory): keeps the full video file in RAM alongside the output
+    // buffer and decoded frame buffers — can exhaust memory on large files.
     setProgress(5, 'Reading video file…', wcFmtSize(videoFile.size));
     const fileBuffer = await videoFile.arrayBuffer();
     if (cancelExport) return;
 
+    // MP4 is a "container format" — it is a wrapper (like a ZIP) that holds
+    // separate compressed video and audio streams inside "tracks".
+    // wcParseMp4 uses MP4Box.js to read the container structure and extract
+    // every compressed frame ("sample") from each track into plain arrays.
+    // videoTrack / audioTrack: metadata about each stream (dimensions, fps, codec).
+    // videoSamples / audioSamples: the actual compressed data, one entry per frame.
+    // mp4file: the live MP4Box object, needed later to read the codec config.
     setProgress(9, 'Parsing container…');
     const { videoTrack, audioTrack, videoSamples, audioSamples, mp4file } =
       await wcParseMp4(fileBuffer);
@@ -1584,23 +1605,53 @@ async function doWebCodecsExport() {
     if (!videoTrack) throw new Error('No video track found in file');
 
     const { width, height } = videoTrack.video;
+    // Timescale: the number of "ticks" per second used to express timestamps in the file.
+    // Example: timescale=90000 means a frame at t=1s has timestamp=90000.
+    // To convert any MP4 timestamp to seconds: seconds = timestamp / timescale.
     const timescale = videoTrack.timescale;
+    // Estimate frame rate: total frames ÷ total duration (converted to seconds).
+    // nb_samples = total frame count in the video track.
+    // ⚠ WARNING: Math.round turns 29.97 fps into 30 fps. This ~0.1% mismatch
+    // between the encoder's declared fps and the real frame spacing causes
+    // slight A/V sync drift on long exports.
     const fps = Math.round(videoTrack.nb_samples / (videoTrack.duration / timescale));
 
     setProgress(11, 'Preparing…', `${width}×${height} · ${fps} fps · ${exportClips.length} clip${exportClips.length !== 1 ? 's' : ''}`);
     await wcYield();
 
+    // For each clip, collect the set of compressed video samples that cover it.
+    // This includes some samples BEFORE clip.start as "pre-roll" — because
+    // H.264 frames often reference earlier frames (they are not self-contained),
+    // so the decoder needs to process those earlier frames first to reconstruct
+    // the ones we actually want. wcGetSamplesForClip finds the last keyframe
+    // before clip.start and starts there, giving the decoder its necessary context.
     const clipGroups = exportClips.map(c => wcGetSamplesForClip(videoSamples, c, timescale));
+    // frameSamples = samples within the clip's display window (used for progress only).
+    // ⚠ WARNING: frameSamples has no upper-bound check in wcGetSamplesForClip,
+    // so totalFrames is slightly overestimated — the progress bar won't reach 91%.
     const totalFrames = clipGroups.reduce((n, g) => n + g.frameSamples.length, 0);
-    console.log("total frames: " +totalFrames)
     if (!totalFrames) throw new Error('No frames found in the selected clip ranges');
 
+    // OffscreenCanvas: a canvas element that lives only in memory, not on the page.
+    // We use it to composite each decoded video frame with the scoreboard overlay
+    // before passing the combined image to the encoder.
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
+    // Configure the muxer with our output tracks and memory target.
+    // ArrayBufferTarget: accumulates all muxed bytes into a RAM buffer.
+    //   Call muxer.target.buffer after finalize() to get the complete MP4 bytes.
+    // fastStart 'in-memory': moves the MP4 metadata (moov box) to the start of
+    //   the file so media players can begin playback immediately without seeking
+    //   to the end first. The in-memory variant buffers everything then reorders.
+    // firstTimestampBehavior 'offset': subtracts the first frame's timestamp from
+    //   all subsequent timestamps, ensuring the output video always starts at t=0.
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
+      // 'avc' = H.264/AVC (Advanced Video Coding) — the most widely supported
+      // video codec. Each compressed frame is a fragment of H.264 bitstream.
       video: { codec: 'avc', width, height },
+      // AAC = Advanced Audio Coding — the standard audio codec inside MP4 files.
       ...(audioTrack ? { audio: {
         codec: 'aac',
         sampleRate: audioTrack.audio.sample_rate,
@@ -1611,66 +1662,170 @@ async function doWebCodecsExport() {
     });
 
     let encErr = null;
+    let encErrClip = -1;
+    // VideoEncoder compresses raw image frames (VideoFrame objects) into
+    // H.264 bitstream chunks. Each output chunk is handed to the muxer immediately.
     const encoder = new VideoEncoder({
       output: (chunk, meta) => { if (!cancelExport) muxer.addVideoChunk(chunk, meta); },
-      error: e => { encErr = e; },
+      error: e => {
+        encErr = e;
+        console.error('[WC] ENCODER ERROR at clip', encErrClip, '—', e.name, e.message, e);
+      },
     });
+    // Codec string format: 'avc1.PPCCLL'
+    //   PP = profile (64 = High Profile — best compression quality)
+    //   CC = constraint flags (00 = none)
+    //   LL = level in hex (28 hex = 40 decimal = Level 4.0)
+    // ⚠ WARNING: H.264 Level 4.0 supports a maximum of 1080p @ 30 fps.
+    // A 4K source video (3840×2160) or 60fps source will likely fail or encode
+    // incorrectly with this config. Level 5.1 ('avc1.640033') supports 4K@30fps.
     encoder.configure({
-      codec: 'avc1.640028',
+      codec: 'avc1.640028', // H.264 High Profile, Level 4.0, caps at 1080p @ 30fps
       width, height,
       bitrate: getExportBitrate(width, height, fps),
       framerate: fps,
+      // 'prefer-hardware' uses the GPU for encoding, which is 10–100x faster than
+      // the CPU. If hardware acceleration isn't available, it falls back to software.
       hardwareAcceleration: 'prefer-hardware',
-      latencyMode: 'quality',
+      // 'realtime' outputs each encoded chunk immediately instead of buffering
+      // many frames for look-ahead analysis ('quality' mode). This keeps the
+      // encode queue small and prevents GPU memory exhaustion across clips.
+      latencyMode: 'realtime',
     });
 
+    // Why we must decode then re-encode even though the source is already H.264:
+    // We need to draw the scoreboard overlay onto every frame. There is no way to
+    // "insert pixels" into a compressed video stream — compressed frames store only
+    // differences and mathematical coefficients, not raw pixels. The only path is:
+    // decompress → draw on canvas → compress again. This is why the export is slow
+    // compared to copying audio, which has no visual modification at all.
+    //
+    // Build the VideoDecoder configuration from codec metadata stored in the MP4.
+    // H.264 streams require SPS (Sequence Parameter Set) and PPS (Picture Parameter
+    // Set) NAL units to be provided up-front. These describe the stream's profile,
+    // resolution, and encoding settings. Without them the decoder cannot start.
+    // wcBuildDecoderConfig reads them from the avcC box in the MP4 container.
     const decoderConfig = wcBuildDecoderConfig(videoTrack, mp4file);
     if (!decoderConfig.description)
       throw new Error('Could not read codec config from video. Only H.264/AVC files are supported.');
 
+    console.log('[WC] source codec:', videoTrack.codec, `${width}×${height}`, fps + 'fps',
+      videoSamples.length + ' samples', 'decoderConfig:', decoderConfig);
+
     let framesEncoded = 0;
+    // Tracks the total output duration placed so far so each new clip is appended
+    // immediately after the previous one with no gap.
     let cumulativeDuration = 0;
 
     for (let ci = 0; ci < clipGroups.length; ci++) {
       if (cancelExport) break;
+      encErrClip = ci;
       const { clip, allSamples, frameSamples } = clipGroups[ci];
+      console.log(`[WC] clip ${ci}: ${clip.start.toFixed(3)}–${clip.end.toFixed(3)}s, ${allSamples.length} samples`);
 
-      // DTS→CTS lookup: chunks are fed by DTS (monotonic) but frames must be
-      // filtered and timestamped by CTS (presentation time).
+      // DTS (Decode Time Stamp): the order in which the decoder must process frames.
+      // CTS (Composition Time Stamp): the order in which frames should be displayed.
+      // These differ when the video uses B-frames (Bidirectional frames).
+      //
+      // B-frames compress a frame by storing only its difference from BOTH a past
+      // and a future frame. This means frame display order ≠ decode order.
+      // Example stream (I=keyframe, P=predicted from past, B=bidirectional):
+      //   Display order:  I  B  B  P  B  B  P
+      //   Decode order:   I  P  B  B  P  B  B   ← B-frames decoded after their references
+      //
+      // The decoder's output callback gives us the DTS. We need CTS to know when
+      // each frame is actually displayed, which is what clip.start/end refers to.
       const dtsToCts = new Map();
       for (const s of allSamples) {
         const ts = s.timescale || timescale;
         dtsToCts.set(Math.round(s.dts * 1_000_000 / ts),
                      Math.round(s.cts * 1_000_000 / ts));
       }
+      // The WebCodecs spec requires decoders to echo back the exact timestamp
+      // passed in, but some implementations round differently. The ±2 µs loop
+      // handles that drift without falling back to the wrong DTS value.
+      const lookupCts = dts => {
+        for (const d of [0, 1, -1, 2, -2]) {
+          const v = dtsToCts.get(dts + d);
+          if (v !== undefined) return v;
+        }
+        return dts; // last resort: treat DTS as CTS (no B-frame offset)
+      };
 
-      // Process each frame immediately inside the output callback and close it
-      // right away.  Accumulating frames in an array without closing them
-      // exhausts GPU memory (≈8 MB per 1080p frame) and stalls the decoder,
-      // causing flush() to never resolve.
+      // firstOfClip forces the first encoded frame of each clip to be a keyframe
+      // (also called an I-frame — Intra-coded frame).
+      // A keyframe is a complete, fully self-contained image. All other frame types
+      // (P-frames, B-frames) store only differences from other frames and CANNOT
+      // be decoded without prior context. At each clip boundary the concatenated
+      // video must start fresh, so a keyframe is mandatory here.
       let firstOfClip = true;
+
+      // Each clip gets its own fresh VideoDecoder so there is no leftover state
+      // (reference frames, B-frame buffers) carried over from the previous clip.
+      // Processing happens inside the output callback: we decode → draw to canvas
+      // → overlay scoreboard → encode → close frame, all inline without buffering.
+      // Buffering decoded frames would exhaust GPU memory (~8 MB per 1080p frame).
       const decoder = new VideoDecoder({
         output: (frame) => {
           try {
-            const ctsMicros = dtsToCts.get(frame.timestamp) ?? frame.timestamp;
+            // Translate the decoder's DTS-based timestamp to display time (CTS).
+            const ctsMicros = lookupCts(frame.timestamp);
             const ctsSec    = ctsMicros / 1_000_000;
+
+            // Only process frames within the clip's display window.
+            // Frames before clip.start are pre-roll: the decoder needed them to
+            // build up its reference frame buffer, but we don't want them in output.
+            //
+            // Why ±0.002 s (2 ms) tolerance?
+            // The clip boundaries (clip.start, clip.end) are floating-point seconds.
+            // The frame's CTS is computed by dividing an integer timestamp by a
+            // timescale integer, which introduces small rounding errors. A frame
+            // intended to land exactly at clip.start might come out as
+            // clip.start + 0.00011 s and get excluded without this tolerance.
+            // 2 ms is much less than one frame (≈33 ms at 30fps), so it can't
+            // accidentally pull in frames from outside the intended range.
             if (ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002
                 && !cancelExport && !encErr) {
+
+              // Map the frame's original timestamp to its position in the output video.
+              // (ctsSec - clip.start)  = how far into this clip this frame is (seconds)
+              // + cumulativeDuration   = total duration of all previously exported clips
               const outTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
+
+              // Draw the raw decoded video frame onto the offscreen canvas.
               ctx.drawImage(frame, 0, 0, width, height);
+
+              // wcScoreAt scans the global `clips` array to count home_point and
+              // away_point entries whose end time is ≤ ctsSec (original timeline).
+              // This gives the running score at this exact moment in the game,
+              // which is correct even for clips exported out of their original context.
               const { h, a } = wcScoreAt(ctsSec);
               wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+
+              // Wrap the canvas pixels in a VideoFrame for the encoder.
+              // VideoFrame is the uncompressed image representation (raw pixel data).
               const vf = new VideoFrame(canvas, { timestamp: outTs });
-              encoder.encode(vf, { keyFrame: firstOfClip });
-              vf.close();
+              try {
+                encoder.encode(vf, { keyFrame: firstOfClip });
+              } catch (syncErr) {
+                console.error('[WC] encoder.encode() threw synchronously:', syncErr.name, syncErr.message, 'outTs:', outTs, 'keyFrame:', firstOfClip);
+                encErr = syncErr;
+              }
+              vf.close(); // Release GPU/memory immediately; encoder has its own copy.
               firstOfClip = false;
               framesEncoded++;
             }
           } finally {
-            frame.close(); // always free GPU memory, even for pre-roll frames
+            // ALWAYS close the decoded frame, even pre-roll frames we don't use.
+            // Decoded frames hold GPU-allocated memory. Forgetting to close them
+            // will exhaust GPU memory and cause the decoder pipeline to stall.
+            frame.close();
           }
         },
-        error: e => { encErr = e; },
+        error: e => {
+          encErr = e;
+          console.error('[WC] DECODER ERROR at clip', ci, '—', e.name, e.message, e);
+        },
       });
       decoder.configure(decoderConfig);
 
@@ -1678,16 +1833,25 @@ async function doWebCodecsExport() {
         if (encErr || decoder.state === 'closed') break;
         const s  = allSamples[si];
         const ts = s.timescale || timescale;
+        // Feed a single compressed frame ("sample") to the decoder.
+        // is_sync = true → keyframe (I-frame); false → P-frame or B-frame ("delta").
+        // Timestamps are in microseconds; dts = decode order, duration = frame length.
+        // The decoder queues this and calls output() asynchronously when ready.
         decoder.decode(new EncodedVideoChunk({
           type:      s.is_sync ? 'key' : 'delta',
           timestamp: Math.round(s.dts * 1_000_000 / ts),
           duration:  Math.round(s.duration * 1_000_000 / ts),
           data:      s.data,
         }));
-        // Yield every 50 samples so output callbacks can fire and GPU memory
-        // is freed incrementally rather than building up to clip-size peaks.
+        // JavaScript is single-threaded. While we're in this synchronous loop,
+        // no callbacks (including the decoder's output()) can fire. Yielding every
+        // 50 samples hands control back to the browser for one tick, letting the
+        // decoder drain its output queue and free GPU memory incrementally.
+        // 50 samples ≈ 1.7 s of video at 30fps — frequent enough to keep memory
+        // low without thrashing the event loop with constant yields.
         if ((si + 1) % 50 === 0) {
           await wcYield();
+          console.log(`[WC] clip ${ci} sample ${si}: framesEncoded=${framesEncoded} encodeQueueSize=${encoder.encodeQueueSize} decodeQueueSize=${decoder.decodeQueueSize}`);
           const pct = 11 + Math.round((framesEncoded / totalFrames) * 80);
           setProgress(pct,
             `Encoding frame ${framesEncoded} / ${totalFrames}`,
@@ -1696,14 +1860,40 @@ async function doWebCodecsExport() {
       }
 
       if (encErr) throw encErr;
+      // flush() signals "no more input" to the decoder and waits until it has
+      // emitted all remaining output frames (including buffered B-frames).
+      // Three-way race: normal completion, 20 s stall timeout, or user cancel.
+      // The cancel leg polls every 50 ms — frequent enough that cancel feels instant
+      // to the user, but not so frequent (e.g. 1 ms) that it burns CPU in the loop.
+      // It resolves (not rejects) so the try block falls through to decoder.close()
+      // cleanly rather than jumping to the catch block.
       if (decoder.state !== 'closed') {
-        await Promise.race([
-          decoder.flush(),
-          new Promise((_, rej) => setTimeout(() =>
-            rej(new Error('Decoder stalled — try a different video file')), 20_000)),
-        ]);
+        let stallTimer, cancelPoll;
+        try {
+          await Promise.race([
+            decoder.flush(),
+            new Promise((_, rej) => { stallTimer = setTimeout(() =>
+              rej(new Error('Decoder stalled — try a different video file')), 20_000); }),
+            new Promise(res => { cancelPoll = setInterval(() => {
+              if (cancelExport) { clearInterval(cancelPoll); res(); }
+            }, 50); }),
+          ]);
+        } finally {
+          clearTimeout(stallTimer);
+          clearInterval(cancelPoll);
+        }
       }
       decoder.close();
+
+      // Flush the encoder after each clip so all buffered frames are compressed
+      // and released from GPU memory before the next clip's decoder starts.
+      // Without this, frames pile up across clips and exhaust GPU memory.
+      // Skip on the last clip — the flush after the loop handles that.
+      if (ci < clipGroups.length - 1 && !cancelExport && !encErr) {
+        console.log(`[WC] flushing encoder after clip ${ci}, queue was:`, encoder.encodeQueueSize);
+        await encoder.flush();
+        console.log(`[WC] encoder flushed, queue now:`, encoder.encodeQueueSize);
+      }
 
       cumulativeDuration += clip.end - clip.start;
     }
@@ -1711,11 +1901,22 @@ async function doWebCodecsExport() {
     if (cancelExport) return;
     if (encErr) throw encErr;
 
+    // Tell the encoder there are no more frames. It drains any internally buffered
+    // frames, calling output() for each, before the promise resolves.
     setProgress(93, 'Flushing encoder…');
     await encoder.flush();
     encoder.close();
 
-    // Audio — direct copy of AAC frames (no decode needed)
+    // Audio: direct copy — AAC frames from the source are muxed as-is.
+    // We don't need to decode and re-encode audio because we're not changing it
+    // (no overlay, no pitch shift, nothing). Unlike video frames, which store
+    // differences between frames and need full decompression to modify, AAC audio
+    // frames are completely self-contained — each one holds a full 21 ms snapshot
+    // of audio that can be read and written independently of any other frame.
+    // This is why every frame is marked type: 'key': there is no such thing as
+    // an audio "P-frame" or "B-frame." Copying them directly costs almost no time.
+    // ⚠ NOTE: Because AAC frames are ~21 ms wide, the nearest frame boundary may
+    // not align exactly to clip.start/end, causing a small click or gap at each cut.
     if (audioTrack && audioSamples.length) {
       setProgress(95, 'Muxing audio…');
       const aTs = audioTrack.timescale;
@@ -1727,13 +1928,25 @@ async function doWebCodecsExport() {
         });
         for (const s of clipAudio) {
           const t = s.cts / (s.timescale || aTs);
-          const outTs = Math.round(((t - clip.start) + audioCumulative) * 1_000_000);
-          muxer.addAudioChunk(new EncodedAudioChunk({ type: 'key', timestamp: outTs, data: s.data }), null);
+          // The ±0.002 s filter above can include a sample that starts just before
+          // clip.start. On the first clip (audioCumulative=0) that makes outTs
+          // slightly negative, which the muxer rejects. Clamp to 0.
+          const outTs = Math.max(0, Math.round(((t - clip.start) + audioCumulative) * 1_000_000));
+          // duration: how long this audio frame lasts, in microseconds.
+          // s.duration is in timescale units, so we convert the same way we do for video.
+          const outDur = Math.max(1, Math.round(s.duration * 1_000_000 / (s.timescale || aTs)));
+          muxer.addAudioChunk(new EncodedAudioChunk({ type: 'key', timestamp: outTs, duration: outDur, data: s.data }), null);
         }
         audioCumulative += clip.end - clip.start;
       }
     }
 
+    // finalize() instructs the muxer to write all MP4 structural metadata
+    // (moov box, track headers, sample tables, stts/ctts timing tables, etc.)
+    // and produce the final byte sequence in muxer.target.buffer.
+    // finalize() is synchronous and can block the thread for a moment on large files.
+    // The wcYield() before it gives the browser one tick to render the "Finalizing"
+    // progress message before that block happens, so the UI doesn't appear frozen.
     setProgress(98, 'Finalizing MP4…');
     await wcYield();
     muxer.finalize();
@@ -1748,6 +1961,10 @@ async function doWebCodecsExport() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    // Revoke after 30 s, not immediately. a.click() triggers the download
+    // but the browser's download manager picks up the URL asynchronously.
+    // Revoking too early (before the download starts reading the blob) would
+    // make the download fail. 30 s is generous enough for any browser to start.
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
 
     setProgress(100, `✓ Exported — ${wcFmtSize(outBuffer.byteLength)}`,
@@ -1758,7 +1975,8 @@ async function doWebCodecsExport() {
     toast('Export complete ✓');
 
   } catch (err) {
-    console.error('WebCodecs export error:', err);
+    console.error('[WC] export failed —', err.name, err.message);
+    console.error('[WC] stack:', err.stack);
     const lbl = $('exp-status');
     if (lbl) { lbl.style.color = 'var(--danger)'; lbl.textContent = '⚠ ' + err.message; }
     const cancelBtn = $('exp-cancel-btn');
