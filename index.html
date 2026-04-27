@@ -1709,11 +1709,8 @@ async function doWebCodecsExport() {
     // resolution, and encoding settings. Without them the decoder cannot start.
     // wcBuildDecoderConfig reads them from the avcC box in the MP4 container.
     const decoderConfig = wcBuildDecoderConfig(videoTrack, mp4file);
-    // H.264 always needs the description (AVCDecoderConfigurationRecord) to decode.
-    // HEVC (hev1) embeds its params in the stream, so no description is required there.
-    const isH264 = /^avc/.test(videoTrack.codec || '');
-    if (isH264 && !decoderConfig.description)
-      throw new Error(`Could not read H.264 codec config from "${videoTrack.codec}". The video may be unsupported or corrupted.`);
+    if (!decoderConfig.description)
+      throw new Error(`Could not read codec config for "${videoTrack.codec}". Supported: H.264 (avc1/avc3) and H.265/HEVC (hev1/hvc1).`);
 
     console.log('[WC] source codec:', videoTrack.codec, `${width}×${height}`, fps + 'fps',
       videoSamples.length + ' samples', 'decoderConfig:', decoderConfig);
@@ -2352,15 +2349,17 @@ function wcBuildDecoderConfig(videoTrack, mp4file) {
     const trak  = mp4file.getTrackById(videoTrack.id);
     const entry = trak.mdia.minf.stbl.stsd.entries[0];
     if (entry.avcC) {
-      // H.264/AVC: the decoder REQUIRES the AVCDecoderConfigurationRecord (SPS+PPS).
-      // MP4Box.DataStream is not exposed in the browser UMD build so we serialize manually.
+      // H.264/AVC: serialize AVCDecoderConfigurationRecord.
+      // MP4Box.DataStream is not exposed in the browser UMD build so we do it manually.
       config.description = wcSerializeAvcC(entry.avcC);
+    } else if (entry.hvcC) {
+      // H.265/HEVC: serialize HEVCDecoderConfigurationRecord.
+      // Common on Android phones which default to HEVC recording.
+      config.description = wcSerializeHvcC(entry.hvcC);
+    } else {
+      // Neither known config box found — log available keys to aid diagnosis.
+      console.warn('[WC] wcBuildDecoderConfig: no avcC or hvcC found. Entry keys:', Object.keys(entry));
     }
-    // HEVC (hev1/hvc1): most Android phones record as 'hev1', which embeds the
-    // decoder parameters (VPS/SPS/PPS) directly inside the first keyframe of the
-    // bitstream. Chrome reads them from there automatically — no description needed.
-    // If the file uses 'hvc1' (out-of-band params), description would be required,
-    // but that format is uncommon; the decoder error callback will fire if it fails.
   } catch (e) {
     console.error('wcBuildDecoderConfig error:', e);
   }
@@ -2393,6 +2392,68 @@ function wcSerializeAvcC(box) {
   for (const p of ppsList) {
     view.setUint16(o, p.nalu.byteLength, false); o += 2;
     buf.set(p.nalu, o); o += p.nalu.byteLength;
+  }
+  return buf;
+}
+
+function wcSerializeHvcC(box) {
+  // Serializes HEVCDecoderConfigurationRecord — ISO/IEC 14496-15:2014 §8.3.3.1.
+  // This is the binary blob the WebCodecs VideoDecoder needs to understand an
+  // H.265/HEVC stream. It contains VPS/SPS/PPS NAL units plus profile/level info.
+  const arrays = box.nalu_arrays || [];
+
+  // Calculate total size: 23-byte fixed header + variable NAL unit arrays.
+  let size = 23;
+  for (const arr of arrays) {
+    size += 3; // 1 byte (type flags) + 2 bytes (numNalus)
+    for (const nalu of arr.nalus || []) size += 2 + nalu.data.byteLength;
+  }
+
+  const buf  = new Uint8Array(size);
+  const view = new DataView(buf.buffer);
+  let o = 0;
+
+  buf[o++] = box.configurationVersion || 1;
+  buf[o++] = ((box.general_profile_space & 0x3) << 6)
+           | ((box.general_tier_flag     & 0x1) << 5)
+           |  (box.general_profile_idc   & 0x1f);
+  view.setUint32(o, box.general_profile_compatibility_flags >>> 0, false); o += 4;
+
+  // general_constraint_indicator_flags is 48 bits. JavaScript numbers are exact
+  // up to 2^53, so a 48-bit integer fits without precision loss. Split it into
+  // the high 32 bits and low 16 bits to write as two separate big-endian values.
+  const cf = box.general_constraint_indicator_flags || 0;
+  view.setUint32(o, Math.floor(cf / 0x10000) >>> 0, false); o += 4;
+  view.setUint16(o, cf % 0x10000,                   false); o += 2;
+
+  buf[o++] = box.general_level_idc;
+  view.setUint16(o, 0xf000 | (box.min_spatial_segmentation_idc & 0x0fff), false); o += 2;
+
+  // MP4Box.js field names for these differ between library versions — try both.
+  const chromaFmt    = box.chroma_format_idc       ?? box.chromaFormat         ?? 0;
+  const lumaMinus8   = box.bit_depth_luma_minus8   ?? box.bitDepthLumaMinus8   ?? 0;
+  const chromaMinus8 = box.bit_depth_chroma_minus8 ?? box.bitDepthChromaMinus8 ?? 0;
+
+  buf[o++] = 0xfc | (box.parallelismType & 0x03);
+  buf[o++] = 0xfc | (chromaFmt          & 0x03);
+  buf[o++] = 0xf8 | (lumaMinus8         & 0x07);
+  buf[o++] = 0xf8 | (chromaMinus8       & 0x07);
+  view.setUint16(o, box.avgFrameRate || 0, false); o += 2;
+  buf[o++] = ((box.constantFrameRate  & 0x03) << 6)
+           | ((box.numTemporalLayers  & 0x07) << 3)
+           | ((box.temporalIdNested   & 0x01) << 2)
+           |  (box.lengthSizeMinusOne & 0x03);
+  buf[o++] = arrays.length;
+
+  for (const arr of arrays) {
+    // array_completeness (1 bit) + reserved 0 (1 bit) + NAL_unit_type (6 bits)
+    buf[o++] = ((arr.completeness & 0x1) << 7) | (arr.type & 0x3f);
+    const nalus = arr.nalus || [];
+    view.setUint16(o, nalus.length, false); o += 2;
+    for (const nalu of nalus) {
+      view.setUint16(o, nalu.data.byteLength, false); o += 2;
+      buf.set(nalu.data, o); o += nalu.data.byteLength;
+    }
   }
   return buf;
 }
