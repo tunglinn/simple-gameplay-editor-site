@@ -1537,11 +1537,8 @@ async function doWebCodecsExport() {
   // WebCodecs is a low-level browser API for encoding/decoding video and audio.
   // It gives direct access to the hardware codec (GPU) rather than going through
   // the browser's high-level video element. Only available in Chrome/Edge.
-  // WebCodecs requires Chrome or Edge on desktop, or Chrome on Android.
-  // iOS Safari and Chrome for iOS do NOT support WebCodecs — Apple forces all
-  // iOS browsers to use the WebKit engine, which lacks VideoEncoder/VideoDecoder.
   if (!('VideoEncoder' in window) || !('VideoDecoder' in window)) {
-    toast('WebCodecs not supported. Use Chrome on Android or desktop (not supported on iOS).');
+    toast('WebCodecs not supported — use Chrome or Edge');
     return;
   }
   // Only export clips that are fully bounded (have both a start AND end time).
@@ -1710,7 +1707,7 @@ async function doWebCodecsExport() {
     // wcBuildDecoderConfig reads them from the avcC box in the MP4 container.
     const decoderConfig = wcBuildDecoderConfig(videoTrack, mp4file);
     if (!decoderConfig.description)
-      throw new Error(`Could not read codec config for "${videoTrack.codec}". Supported: H.264 (avc1/avc3) and H.265/HEVC (hev1/hvc1).`);
+      throw new Error('Could not read codec config from video. Only H.264/AVC files are supported.');
 
     console.log('[WC] source codec:', videoTrack.codec, `${width}×${height}`, fps + 'fps',
       videoSamples.length + ' samples', 'decoderConfig:', decoderConfig);
@@ -2346,22 +2343,15 @@ function wcBuildDecoderConfig(videoTrack, mp4file) {
     hardwareAcceleration: 'prefer-hardware',
   };
   try {
-    const trak  = mp4file.getTrackById(videoTrack.id);
+    const trak = mp4file.getTrackById(videoTrack.id);
     const entry = trak.mdia.minf.stbl.stsd.entries[0];
     if (entry.avcC) {
-      // H.264/AVC: serialize AVCDecoderConfigurationRecord.
-      // MP4Box.DataStream is not exposed in the browser UMD build so we do it manually.
+      // Manually serialize AVCDecoderConfigurationRecord from the parsed box
+      // properties — MP4Box.DataStream is not exposed in the browser UMD build.
       config.description = wcSerializeAvcC(entry.avcC);
-    } else if (entry.hvcC) {
-      // H.265/HEVC: serialize HEVCDecoderConfigurationRecord.
-      // Common on Android phones which default to HEVC recording.
-      config.description = wcSerializeHvcC(entry.hvcC);
-    } else {
-      // Neither known config box found — log available keys to aid diagnosis.
-      console.warn('[WC] wcBuildDecoderConfig: no avcC or hvcC found. Entry keys:', Object.keys(entry));
     }
   } catch (e) {
-    console.error('wcBuildDecoderConfig error:', e);
+    console.error('wcBuildDecoderConfig:', e);
   }
   return config;
 }
@@ -2392,68 +2382,6 @@ function wcSerializeAvcC(box) {
   for (const p of ppsList) {
     view.setUint16(o, p.nalu.byteLength, false); o += 2;
     buf.set(p.nalu, o); o += p.nalu.byteLength;
-  }
-  return buf;
-}
-
-function wcSerializeHvcC(box) {
-  // Serializes HEVCDecoderConfigurationRecord — ISO/IEC 14496-15:2014 §8.3.3.1.
-  // This is the binary blob the WebCodecs VideoDecoder needs to understand an
-  // H.265/HEVC stream. It contains VPS/SPS/PPS NAL units plus profile/level info.
-  const arrays = box.nalu_arrays || [];
-
-  // Calculate total size: 23-byte fixed header + variable NAL unit arrays.
-  let size = 23;
-  for (const arr of arrays) {
-    size += 3; // 1 byte (type flags) + 2 bytes (numNalus)
-    for (const nalu of arr.nalus || []) size += 2 + nalu.data.byteLength;
-  }
-
-  const buf  = new Uint8Array(size);
-  const view = new DataView(buf.buffer);
-  let o = 0;
-
-  buf[o++] = box.configurationVersion || 1;
-  buf[o++] = ((box.general_profile_space & 0x3) << 6)
-           | ((box.general_tier_flag     & 0x1) << 5)
-           |  (box.general_profile_idc   & 0x1f);
-  view.setUint32(o, box.general_profile_compatibility_flags >>> 0, false); o += 4;
-
-  // general_constraint_indicator_flags is 48 bits. JavaScript numbers are exact
-  // up to 2^53, so a 48-bit integer fits without precision loss. Split it into
-  // the high 32 bits and low 16 bits to write as two separate big-endian values.
-  const cf = box.general_constraint_indicator_flags || 0;
-  view.setUint32(o, Math.floor(cf / 0x10000) >>> 0, false); o += 4;
-  view.setUint16(o, cf % 0x10000,                   false); o += 2;
-
-  buf[o++] = box.general_level_idc;
-  view.setUint16(o, 0xf000 | (box.min_spatial_segmentation_idc & 0x0fff), false); o += 2;
-
-  // MP4Box.js field names for these differ between library versions — try both.
-  const chromaFmt    = box.chroma_format_idc       ?? box.chromaFormat         ?? 0;
-  const lumaMinus8   = box.bit_depth_luma_minus8   ?? box.bitDepthLumaMinus8   ?? 0;
-  const chromaMinus8 = box.bit_depth_chroma_minus8 ?? box.bitDepthChromaMinus8 ?? 0;
-
-  buf[o++] = 0xfc | (box.parallelismType & 0x03);
-  buf[o++] = 0xfc | (chromaFmt          & 0x03);
-  buf[o++] = 0xf8 | (lumaMinus8         & 0x07);
-  buf[o++] = 0xf8 | (chromaMinus8       & 0x07);
-  view.setUint16(o, box.avgFrameRate || 0, false); o += 2;
-  buf[o++] = ((box.constantFrameRate  & 0x03) << 6)
-           | ((box.numTemporalLayers  & 0x07) << 3)
-           | ((box.temporalIdNested   & 0x01) << 2)
-           |  (box.lengthSizeMinusOne & 0x03);
-  buf[o++] = arrays.length;
-
-  for (const arr of arrays) {
-    // array_completeness (1 bit) + reserved 0 (1 bit) + NAL_unit_type (6 bits)
-    buf[o++] = ((arr.completeness & 0x1) << 7) | (arr.type & 0x3f);
-    const nalus = arr.nalus || [];
-    view.setUint16(o, nalus.length, false); o += 2;
-    for (const nalu of nalus) {
-      view.setUint16(o, nalu.data.byteLength, false); o += 2;
-      buf.set(nalu.data, o); o += nalu.data.byteLength;
-    }
   }
   return buf;
 }
