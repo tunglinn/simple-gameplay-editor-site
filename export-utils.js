@@ -145,11 +145,42 @@ function wcGetSamplesForClip(allSamples, clip, timescale) {
   return { clip, allSamples: allSamplesForClip, frameSamples };
 }
 
+// Scan a raw MP4 ArrayBuffer for a box by 4-char type code and return its content
+// bytes (everything after the 8-byte size+type header), or null if not found.
+//
+// Why this exists: MP4Box.js parses the MP4 box tree into JavaScript objects. When
+// it encounters a malformed sibling box (e.g. a box claiming a size of 1.75 GB
+// inside a 232-byte container), it logs a warning and can fail to populate the NAL
+// array fields of the avcC/hvcC object — leaving NaluArrays/SPS/PPS empty. The raw
+// bytes in the file are correct; MP4Box just didn't read them. By searching the
+// ArrayBuffer directly we bypass the parser entirely and get the real bytes.
+function wcExtractRawBox(fileBuffer, typeFourCC) {
+  const needle = typeFourCC.split('').map(c => c.charCodeAt(0));
+  const bytes  = new Uint8Array(fileBuffer);
+  for (let i = 4; i <= bytes.length - 8; i++) {
+    if (bytes[i]   === needle[0] && bytes[i+1] === needle[1] &&
+        bytes[i+2] === needle[2] && bytes[i+3] === needle[3]) {
+      const boxSize = ((bytes[i-4] << 24) | (bytes[i-3] << 16) |
+                       (bytes[i-2] << 8)  |  bytes[i-1]) >>> 0;
+      const contentStart = i + 4;            // skip 4-byte type field
+      const contentEnd   = (i - 4) + boxSize; // box start + total box size
+      // Sanity-check: codec config boxes are always small and start with version=1.
+      if (boxSize >= 20 && boxSize <= 65536 &&
+          contentEnd <= bytes.length &&
+          bytes[contentStart] === 1) {
+        return bytes.slice(contentStart, contentEnd); // slice = independent copy
+      }
+    }
+  }
+  return null;
+}
+
 // CommonJS export — used by Node.js / Vitest.
 // The `if` guard makes this a no-op in the browser, where `module` is undefined.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     fmt, fmtDur, wcYield, wcFmtSize,
     wcPickH264Codec, wcSerializeAvcC, wcSerializeHvcC, wcGetSamplesForClip,
+    wcExtractRawBox,
   };
 }

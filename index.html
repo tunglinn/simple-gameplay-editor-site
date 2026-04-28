@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-title" content="SportMark">
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
-  <script src="export-utils.js"></script>
+  <script src="export-utils.js?v=2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1629,6 +1629,23 @@ async function doWebCodecsExport() {
     if (cancelExport) return;
     if (!videoTrack) throw new Error('No video track found in file');
 
+    // ── Sample extraction audit ──────────────────────────────────────────────
+    // If MP4Box misaligns while parsing (see any [BoxParser] warnings above),
+    // videoSamples can come back empty or with zero-length data arrays.
+    // Either way the decoder receives nothing and decoded=0.
+    console.log(`[WC] parsed: videoSamples=${videoSamples.length}, audioSamples=${audioSamples.length}`);
+    if (videoSamples.length === 0) {
+      console.warn('[WC] ⚠ 0 video samples — MP4Box failed to extract samples; likely caused by the BoxParser size warning above');
+    } else {
+      const s0 = videoSamples[0], sN = videoSamples[videoSamples.length - 1];
+      const ts0 = s0.timescale || 1;
+      console.log(`[WC] sample[0]:  is_sync=${s0.is_sync}, dts=${(s0.dts/ts0).toFixed(3)}s, dataLen=${s0.data?.byteLength ?? '⚠MISSING'}`);
+      console.log(`[WC] sample[${videoSamples.length-1}]: is_sync=${sN.is_sync}, dts=${(sN.dts/ts0).toFixed(3)}s, dataLen=${sN.data?.byteLength ?? '⚠MISSING'}`);
+      const emptyCount = videoSamples.filter(s => !s.data?.byteLength).length;
+      if (emptyCount) console.warn(`[WC] ⚠ ${emptyCount} of ${videoSamples.length} samples have empty/missing data`);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const { width, height } = videoTrack.video;
     // Timescale: the number of "ticks" per second used to express timestamps in the file.
     // Example: timescale=90000 means a frame at t=1s has timestamp=90000.
@@ -1756,8 +1773,47 @@ async function doWebCodecsExport() {
       throw new Error('Could not read codec config from video. H.264 (AVC) and H.265 (HEVC) files are supported. If the file is HEVC and this still fails, try the MediaRecorder engine.');
     }
 
+    // MP4Box can produce a structurally valid description record that has ZERO
+    // parameter sets (numOfArrays=0 for HEVC, numSPS=0 for AVC). This happens when
+    // a malformed box in stsd causes the BoxParser to skip the NAL array section of
+    // the avcC/hvcC box. The decoder silently accepts every decode() call but
+    // produces no frames because it has no VPS/SPS/PPS to reference.
+    //
+    // Detect this and fall back to scanning the raw file bytes directly for the
+    // codec config box. The bytes in the file are correct — MP4Box just failed to
+    // read them into its object model.
+    {
+      const desc   = decoderConfig.description;
+      const codec  = (videoTrack.codec || '').toLowerCase();
+      const isHEVC = codec.startsWith('hvc') || codec.startsWith('hev');
+      // HEVC: byte[22] = numOfArrays.  AVC: byte[5] bits[4:0] = numSPS.
+      const numParamSets = isHEVC ? desc[22] : (desc[5] & 0x1f);
+      if (numParamSets === 0) {
+        const boxType = isHEVC ? 'hvcC' : 'avcC';
+        console.warn(`[WC] description has 0 parameter sets — MP4Box failed to parse ${boxType}; scanning raw file bytes`);
+        const rawDesc = wcExtractRawBox(fileBuffer, boxType);
+        if (rawDesc) {
+          const hex8 = Array.from(rawDesc.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+          console.log(`[WC] raw ${boxType} found: ${rawDesc.byteLength} bytes | first 8: ${hex8}`);
+          decoderConfig.description = rawDesc;
+        } else {
+          console.warn(`[WC] ⚠ raw ${boxType} not found in file bytes — export will likely fail`);
+        }
+      }
+    }
+
     console.log('[WC] source codec:', videoTrack.codec, `${width}×${height}`, fps + 'fps',
-      videoSamples.length + ' samples', 'decoderConfig:', decoderConfig);
+      videoSamples.length + ' samples');
+    // Dump the description bytes as hex. For a valid record, byte[0] MUST be 0x01
+    // (configurationVersion). If it is anything else, wcBuildDecoderConfig read
+    // garbage — the stsd/avcC/hvcC box was corrupted by the BoxParser misalignment.
+    if (decoderConfig.description) {
+      const hex = Array.from(decoderConfig.description.slice(0, 24))
+        .map(b => b.toString(16).padStart(2, '0')).join(' ');
+      const valid = decoderConfig.description[0] === 1;
+      console.log(`[WC] description[0..23]: ${hex}`);
+      console.log(`[WC] description valid (byte[0]==0x01): ${valid}${valid ? ' ✓' : ' ⚠ GARBAGE — this is why the decoder produces no frames'}`);
+    }
     try {
       const decSupport = await VideoDecoder.isConfigSupported(decoderConfig);
       console.log('[WC] decoder isConfigSupported:', decSupport.supported,
@@ -1777,7 +1833,13 @@ async function doWebCodecsExport() {
       if (cancelExport) break;
       encErrClip = ci;
       const { clip, allSamples, frameSamples } = clipGroups[ci];
-      console.log(`[WC] clip ${ci}: ${clip.start.toFixed(3)}–${clip.end.toFixed(3)}s, ${allSamples.length} samples`);
+      console.log(`[WC] clip ${ci}: ${clip.start.toFixed(3)}–${clip.end.toFixed(3)}s | allSamples=${allSamples.length}, frameSamples=${frameSamples.length}`);
+      if (allSamples.length === 0) {
+        console.warn(`[WC] clip ${ci} ⚠ allSamples is empty — clip window outside video timeline, or videoSamples was empty`);
+      } else {
+        const s0 = allSamples[0], ts0 = s0.timescale || timescale;
+        console.log(`[WC] clip ${ci} preroll: is_sync=${s0.is_sync}, dts=${(s0.dts/ts0).toFixed(3)}s, dataLen=${s0.data?.byteLength ?? '⚠MISSING'}`);
+      }
 
       // DTS (Decode Time Stamp): the order in which the decoder must process frames.
       // CTS (Composition Time Stamp): the order in which frames should be displayed.
@@ -1941,11 +2003,19 @@ async function doWebCodecsExport() {
         },
       });
       decoder.configure(decoderConfig);
+      console.log(`[WC] clip ${ci} decoder state after configure: ${decoder.state}`);
 
+      let samplesSent = 0;
       for (let si = 0; si < allSamples.length; si++) {
-        if (encErr || decoder.state === 'closed') break;
+        if (encErr || decoder.state === 'closed') {
+          console.warn(`[WC] clip ${ci} decode loop exited early at si=${si}: encErr=${!!encErr}, decoderState=${decoder.state}`);
+          break;
+        }
         const s  = allSamples[si];
         const ts = s.timescale || timescale;
+        if (si === 0) {
+          console.log(`[WC] clip ${ci} first decode() call: type=${s.is_sync?'key':'delta'}, ts=${Math.round(s.dts*1e6/ts)}, dataLen=${s.data?.byteLength ?? '⚠MISSING'}`);
+        }
         // Feed a single compressed frame ("sample") to the decoder.
         // is_sync = true → keyframe (I-frame); false → P-frame or B-frame ("delta").
         // Timestamps are in microseconds; dts = decode order, duration = frame length.
@@ -1956,6 +2026,7 @@ async function doWebCodecsExport() {
           duration:  Math.round(s.duration * 1_000_000 / ts),
           data:      s.data,
         }));
+        samplesSent++;
         // JavaScript is single-threaded. While we're in this synchronous loop,
         // no callbacks (including the decoder's output()) can fire. Yielding every
         // 50 samples hands control back to the browser for one tick, letting the
@@ -1964,13 +2035,14 @@ async function doWebCodecsExport() {
         // low without thrashing the event loop with constant yields.
         if ((si + 1) % 50 === 0) {
           await wcYield();
-          console.log(`[WC] clip ${ci} sample ${si}: framesEncoded=${framesEncoded} encodeQueueSize=${encoder.encodeQueueSize} decodeQueueSize=${decoder.decodeQueueSize}`);
+          console.log(`[WC] clip ${ci} sample ${si}: framesDecoded=${framesDecodedThisClip} framesEncoded=${framesEncoded} decoderState=${decoder.state} decodeQ=${decoder.decodeQueueSize} encodeQ=${encoder.encodeQueueSize}`);
           const pct = 11 + Math.round((framesEncoded / totalFrames) * 80);
           setProgress(pct,
             `Encoding frame ${framesEncoded} / ${totalFrames}`,
             `Clip ${ci + 1} / ${exportClips.length}`);
         }
       }
+      console.log(`[WC] clip ${ci} decode loop done: samplesSent=${samplesSent}, decoderState=${decoder.state}`);
 
       if (encErr) throw encErr;
       // flush() signals "no more input" to the decoder and waits until it has
@@ -1996,6 +2068,7 @@ async function doWebCodecsExport() {
           clearInterval(cancelPoll);
         }
       }
+      console.log(`[WC] clip ${ci} post-flush decoder state: ${decoder.state}`);
       decoder.close();
       console.log(`[WC] clip ${ci} summary: decoded=${framesDecodedThisClip}, encoded=${framesEncoded} total so far`);
 
