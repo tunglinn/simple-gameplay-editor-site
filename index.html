@@ -1803,7 +1803,15 @@ async function doWebCodecsExport() {
       // → overlay scoreboard → encode → close frame, all inline without buffering.
       // Buffering decoded frames would exhaust GPU memory (~8 MB per 1080p frame).
       const decoder = new VideoDecoder({
-        output: (frame) => {
+        output: async (frame) => {
+          // NOTE: this callback is async so we can await createImageBitmap (see below).
+          // JavaScript is single-threaded, so "concurrent" callbacks are really
+          // interleaved at await points — not truly parallel. The key invariant to
+          // preserve is firstOfClip: we must read and reset it before the first
+          // await, otherwise a second frame's callback could start during our await
+          // and both would wrongly see firstOfClip=true, emitting two keyframes.
+          // We solve this by reading+resetting firstOfClip synchronously here, before
+          // any await, and only for frames that are actually inside the clip window.
           try {
             // Translate the decoder's DTS-based timestamp to display time (CTS).
             const ctsMicros = lookupCts(frame.timestamp);
@@ -1824,13 +1832,34 @@ async function doWebCodecsExport() {
             if (ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002
                 && !cancelExport && !encErr) {
 
+              // Capture and reset firstOfClip synchronously before the first await.
+              // If we awaited first, another frame callback could run in the gap and
+              // also see firstOfClip=true, causing two keyframes at the clip start.
+              const keyFrame = firstOfClip;
+              firstOfClip = false;
+
               // Map the frame's original timestamp to its position in the output video.
               // (ctsSec - clip.start)  = how far into this clip this frame is (seconds)
               // + cumulativeDuration   = total duration of all previously exported clips
               const outTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
 
-              // Draw the raw decoded video frame onto the offscreen canvas.
-              ctx.drawImage(frame, 0, 0, width, height);
+              // Hardware-decoded VideoFrames on Android are stored in a GPU-resident
+              // YUV texture (produced by MediaCodec, the Android hardware codec).
+              // Calling ctx.drawImage(frame) directly on a 2D OffscreenCanvas performs
+              // a GPU→CPU readback that fails silently on Android Chrome — the canvas
+              // receives nothing and stays black, making every exported frame black.
+              //
+              // createImageBitmap routes the conversion through the browser's full
+              // image compositing pipeline, which correctly handles GPU textures on
+              // every platform. The result is a CPU-accessible RGBA ImageBitmap that
+              // the 2D canvas can draw without any readback issues.
+              //
+              // On desktop Chrome the direct ctx.drawImage(frame) path also works
+              // because the compositor there handles the transfer, but using
+              // createImageBitmap is correct on all platforms so we do it always.
+              const bitmap = await createImageBitmap(frame);
+              ctx.drawImage(bitmap, 0, 0, width, height);
+              bitmap.close();
 
               // wcScoreAt scans the global `clips` array to count home_point and
               // away_point entries whose end time is ≤ ctsSec (original timeline).
@@ -1843,15 +1872,16 @@ async function doWebCodecsExport() {
               // VideoFrame is the uncompressed image representation (raw pixel data).
               const vf = new VideoFrame(canvas, { timestamp: outTs });
               try {
-                encoder.encode(vf, { keyFrame: firstOfClip });
+                encoder.encode(vf, { keyFrame });
               } catch (syncErr) {
-                console.error('[WC] encoder.encode() threw synchronously:', syncErr.name, syncErr.message, 'outTs:', outTs, 'keyFrame:', firstOfClip);
+                console.error('[WC] encoder.encode() threw synchronously:', syncErr.name, syncErr.message, 'outTs:', outTs, 'keyFrame:', keyFrame);
                 encErr = syncErr;
               }
               vf.close(); // Release GPU/memory immediately; encoder has its own copy.
-              firstOfClip = false;
               framesEncoded++;
             }
+          } catch (e) {
+            if (!encErr) { encErr = e; console.error('[WC] frame processing error:', e.name, e.message); }
           } finally {
             // ALWAYS close the decoded frame, even pre-roll frames we don't use.
             // Decoded frames hold GPU-allocated memory. Forgetting to close them
