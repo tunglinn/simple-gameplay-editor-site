@@ -1,0 +1,16 @@
+{
+  "name": "sportmark",
+  "private": true,
+  "scripts": {
+    "test":       "vitest run",
+    "test:watch": "vitest",
+    "test:e2e":   "playwright test",
+    "test:e2e:ui":"playwright test --ui",
+    "serve":      "npx serve ."
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0",
+    "@playwright/test": "^1.45.0",
+    "serve": "^14.0.0"
+  }
+}

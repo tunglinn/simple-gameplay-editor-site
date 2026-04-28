@@ -11,6 +11,7 @@
   <meta name="apple-mobile-web-app-title" content="SportMark">
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+  <script src="export-utils.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1355,20 +1356,10 @@ function doExport() {
 function closePanel(id) { $(id).classList.remove('open'); }
 
 // ════════════════════════════════════════════════════
-//  UTILS
+//  UTILS  (fmt, fmtDur, wcYield, wcFmtSize, wcPickH264Codec,
+//           wcSerializeAvcC, wcSerializeHvcC, wcGetSamplesForClip
+//           are loaded from export-utils.js)
 // ════════════════════════════════════════════════════
-function fmt(s) {
-  if (s === null || s === undefined || isNaN(s)) return '--:--';
-  const m   = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  const f   = Math.floor((s % 1) * 10);
-  return `${m}:${String(sec).padStart(2,'0')}.${f}`;
-}
-
-function fmtDur(s) {
-  if (isNaN(s) || s < 0) return '';
-  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s/60)}m${String(Math.floor(s%60)).padStart(2,'0')}s`;
-}
 
 let snackTimer;
 function toast(msg) {
@@ -2303,14 +2294,6 @@ async function doMediaRecorderExport() {
 
 // ── Helpers ──────────────────────────────────────────
 
-function wcYield() { return new Promise(r => setTimeout(r, 0)); }
-
-function wcFmtSize(bytes) {
-  return bytes > 1_073_741_824
-    ? (bytes / 1_073_741_824).toFixed(1) + ' GB'
-    : (bytes / 1_048_576).toFixed(0) + ' MB';
-}
-
 function wcClampBitrate(w, h, fps) {
   return Math.min(20_000_000, Math.max(2_000_000, Math.round(w * h * fps * 0.05)));
 }
@@ -2345,38 +2328,6 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
   ctx.fillStyle = '#ff8a80';
   ctx.textAlign = 'right';
   ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY);
-}
-
-function wcGetSamplesForClip(allSamples, clip, timescale) {
-  // All boundary decisions use DTS — samples are in DTS order and DTS is
-  // monotonically increasing. CTS can jump backwards with B-frames, which
-  // caused the previous version to cut the GOP short and hang on flush().
-  let prerollIdx = -1;
-  for (let i = 0; i < allSamples.length; i++) {
-    const t = allSamples[i].dts / (allSamples[i].timescale || timescale);
-    if (t > clip.start) break;
-    if (allSamples[i].is_sync) prerollIdx = i;
-  }
-  if (prerollIdx === -1) {
-    prerollIdx = allSamples.findIndex(s => s.is_sync);
-    if (prerollIdx === -1) throw new Error('No keyframes found in video track');
-  }
-
-  const allSamplesForClip = [];
-  const frameSamples = [];
-  for (let i = prerollIdx; i < allSamples.length; i++) {
-    const s = allSamples[i];
-    const ts = s.timescale || timescale;
-    const dtsSec = s.dts / ts;
-    const ctsSec = s.cts / ts;
-    // Use DTS + 1 s margin for the end boundary so full GOPs are captured.
-    // CTS could be ahead of DTS by up to ~1 s with B-frames at typical settings.
-    if (dtsSec > clip.end + 1.0) break;
-    allSamplesForClip.push(s);
-    if (ctsSec >= clip.start - 0.002) frameSamples.push(s);
-  }
-
-  return { clip, allSamples: allSamplesForClip, frameSamples };
 }
 
 async function wcParseMp4(arrayBuffer) {
@@ -2442,129 +2393,7 @@ function wcBuildDecoderConfig(videoTrack, mp4file) {
   return config;
 }
 
-function wcSerializeAvcC(box) {
-  const spsList = box.SPS || [];
-  const ppsList = box.PPS || [];
-
-  let size = 6 + 1; // 5 config bytes + 1 numSPS + 1 numPPS
-  for (const s of spsList) size += 2 + s.nalu.byteLength;
-  for (const p of ppsList) size += 2 + p.nalu.byteLength;
-
-  const buf = new Uint8Array(size);
-  const view = new DataView(buf.buffer);
-  let o = 0;
-
-  buf[o++] = box.configurationVersion || 1;
-  buf[o++] = box.AVCProfileIndication;
-  buf[o++] = box.profile_compatibility;
-  buf[o++] = box.AVCLevelIndication;
-  buf[o++] = (box.lengthSizeMinusOne & 0x3) | 0xfc; // upper 6 bits reserved = 1
-  buf[o++] = (spsList.length & 0x1f) | 0xe0;         // upper 3 bits reserved = 1
-  for (const s of spsList) {
-    view.setUint16(o, s.nalu.byteLength, false); o += 2; // big-endian
-    buf.set(s.nalu, o); o += s.nalu.byteLength;
-  }
-  buf[o++] = ppsList.length;
-  for (const p of ppsList) {
-    view.setUint16(o, p.nalu.byteLength, false); o += 2;
-    buf.set(p.nalu, o); o += p.nalu.byteLength;
-  }
-  return buf;
-}
-
-function wcSerializeHvcC(box) {
-  // Serialize HEVCDecoderConfigurationRecord (ISO 14496-15, Section 8.3.3.1).
-  // The structure is analogous to wcSerializeAvcC but for H.265/HEVC, where the
-  // parameter sets come in three flavours stored as typed NAL unit arrays:
-  //   VPS (Video Parameter Set)  — NAL unit type 32
-  //   SPS (Sequence Parameter Set) — NAL unit type 33
-  //   PPS (Picture Parameter Set) — NAL unit type 34
-  // MP4Box parses the hvcC box and exposes these as box.NaluArrays, a list of
-  // { completeness, nal_unit_type, units: [{ data: Uint8Array }] }.
-  const naluArrays = box.NaluArrays || [];
-
-  // Pre-compute the total byte length of the output buffer.
-  // Fixed header = 23 bytes (see below for field breakdown) + 1 byte numOfArrays.
-  let size = 23 + 1;
-  for (const arr of naluArrays) {
-    size += 1 + 2; // 1 byte (completeness+type) + 2 bytes (numNalus count)
-    for (const unit of arr.units) {
-      size += 2 + unit.data.byteLength; // 2-byte length prefix + NAL unit payload
-    }
-  }
-
-  const buf  = new Uint8Array(size);
-  const view = new DataView(buf.buffer);
-  let o = 0;
-
-  // ── 23-byte fixed header ────────────────────────────────────────────────────
-  buf[o++] = box.configurationVersion || 1;
-
-  // Byte 1: general_profile_space (2 bits) | general_tier_flag (1 bit) | general_profile_idc (5 bits)
-  buf[o++] = ((box.general_profile_space & 0x3) << 6) |
-             ((box.general_tier_flag     & 0x1) << 5) |
-              (box.general_profile_idc   & 0x1f);
-
-  // Bytes 2–5: general_profile_compatibility_flags (32 bits, big-endian)
-  view.setUint32(o, box.general_profile_compatibility_flags || 0, false); o += 4;
-
-  // Bytes 6–11: general_constraint_indicator_flags (48 bits).
-  // MP4Box reads these as a Uint8Array of 6 bytes; copy them directly.
-  const gcif = box.general_constraint_indicator_flags;
-  if (gcif && gcif.length === 6) buf.set(gcif, o);
-  o += 6;
-
-  buf[o++] = box.general_level_idc || 0;
-
-  // Bytes 13–14: reserved (4 bits = 0xF) | min_spatial_segmentation_idc (12 bits)
-  view.setUint16(o, 0xf000 | (box.min_spatial_segmentation_idc & 0x0fff), false); o += 2;
-
-  // Bytes 15–19: single-byte fields, each with reserved high bits set to 1.
-  buf[o++] = 0xfc | (box.parallelismType       & 0x3);
-  buf[o++] = 0xfc | (box.chroma_format_idc     & 0x3);
-  buf[o++] = 0xf8 | (box.bit_depth_luma_minus8   & 0x7);
-  buf[o++] = 0xf8 | (box.bit_depth_chroma_minus8 & 0x7);
-
-  // Bytes 20–21: avgFrameRate (16 bits, big-endian)
-  view.setUint16(o, box.avgFrameRate || 0, false); o += 2;
-
-  // Byte 22: constantFrameRate (2) | numTemporalLayers (3) | temporalIdNested (1) | lengthSizeMinusOne (2)
-  buf[o++] = ((box.constantFrameRate  & 0x3) << 6) |
-             ((box.numTemporalLayers  & 0x7) << 3) |
-             ((box.temporalIdNested   & 0x1) << 2) |
-              (box.lengthSizeMinusOne & 0x3);
-
-  // ── NAL unit arrays ─────────────────────────────────────────────────────────
-  buf[o++] = naluArrays.length; // numOfArrays
-  for (const arr of naluArrays) {
-    // Byte: array_completeness (1 bit) | reserved 0 (1 bit) | NAL_unit_type (6 bits)
-    buf[o++] = ((arr.completeness & 0x1) << 7) | (arr.nal_unit_type & 0x3f);
-    view.setUint16(o, arr.units.length, false); o += 2;
-    for (const unit of arr.units) {
-      const data = unit.data instanceof Uint8Array
-        ? unit.data
-        : new Uint8Array(unit.data.buffer || unit.data);
-      view.setUint16(o, data.byteLength, false); o += 2;
-      buf.set(data, o); o += data.byteLength;
-    }
-  }
-
-  return buf;
-}
-
-function wcPickH264Codec(width, height, fps) {
-  // H.264 defines levels by the maximum macroblocks-per-second (MBs/sec) a
-  // decoder/encoder must handle, where each macroblock covers 16×16 pixels.
-  // Choosing a level lower than the video requires causes the encoder to
-  // reject or corrupt frames silently.
-  //   Level 4.0 (0x28): ≤ 245 760 MBs/sec — 1920×1080 @ 30 fps
-  //   Level 5.0 (0x32): ≤ 589 824 MBs/sec — ~2560×1440 @ 30 fps
-  //   Level 5.1 (0x33): ≤ 983 040 MBs/sec — 3840×2160 @ 30 fps (4K)
-  const mbsPerSec = Math.ceil(width / 16) * Math.ceil(height / 16) * fps;
-  if (mbsPerSec > 589_824) return 'avc1.640033'; // Level 5.1 — 4K
-  if (mbsPerSec > 245_760) return 'avc1.640032'; // Level 5.0 — 1440p or 1080p60
-  return 'avc1.640028';                           // Level 4.0 — 1080p30 and below
-}
+// wcSerializeAvcC, wcSerializeHvcC, wcPickH264Codec are loaded from export-utils.js
 
 // Init
 updateUndoRedo();
