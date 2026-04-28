@@ -1612,8 +1612,17 @@ async function doWebCodecsExport() {
     // This is needed because MP4Box.js (the parser below) operates on raw bytes.
     // ⚠ WARNING (memory): keeps the full video file in RAM alongside the output
     // buffer and decoded frame buffers — can exhaust memory on large files.
+    //
+    // We fetch from the blob URL (videoSrc) rather than calling videoFile.arrayBuffer()
+    // directly. On Android, the File object's path permission is granted once at
+    // file-picker time and can expire if the phone locks or the tab goes to background.
+    // Calling arrayBuffer() after the permission expires throws NotReadableError.
+    // The blob URL was created with URL.createObjectURL() at load time, which copies
+    // the file bytes into the browser's internal blob store — a location that does not
+    // depend on the Android filesystem permission and stays readable until we call
+    // URL.revokeObjectURL() (which only happens on reset or new file load).
     setProgress(5, 'Reading video file…', wcFmtSize(videoFile.size));
-    const fileBuffer = await videoFile.arrayBuffer();
+    const fileBuffer = await fetch(videoSrc).then(r => r.arrayBuffer());
     if (cancelExport) return;
 
     // MP4 is a "container format" — it is a wrapper (like a ZIP) that holds
