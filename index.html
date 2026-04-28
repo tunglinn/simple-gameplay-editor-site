@@ -1662,6 +1662,7 @@ async function doWebCodecsExport() {
     // before passing the combined image to the encoder.
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext('2d');
+    console.log('[WC] OffscreenCanvas ctx:', ctx ? 'ok' : '⚠ NULL — all canvas ops will silently no-op');
 
     // Configure the muxer with our output tracks and memory target.
     // ArrayBufferTarget: accumulates all muxed bytes into a RAM buffer.
@@ -1705,7 +1706,7 @@ async function doWebCodecsExport() {
     //   Level 4.0 (avc1.640028) — up to ~245 760 MBs/sec → 1080p @ 30 fps
     //   Level 5.0 (avc1.640032) — up to ~589 824 MBs/sec → ~1440p @ 30 fps
     //   Level 5.1 (avc1.640033) — up to ~983 040 MBs/sec → 4K @ 30 fps
-    encoder.configure({
+    const encoderConfig = {
       codec: wcPickH264Codec(width, height, fps),
       width, height,
       bitrate: getExportBitrate(width, height, fps),
@@ -1717,7 +1718,16 @@ async function doWebCodecsExport() {
       // many frames for look-ahead analysis ('quality' mode). This keeps the
       // encode queue small and prevents GPU memory exhaustion across clips.
       latencyMode: 'realtime',
-    });
+    };
+    try {
+      const encSupport = await VideoEncoder.isConfigSupported(encoderConfig);
+      console.log('[WC] encoder isConfigSupported:', encSupport.supported,
+        '| hw:', encSupport.config?.hardwareAcceleration,
+        '| codec:', encSupport.config?.codec);
+    } catch (e) {
+      console.warn('[WC] encoder isConfigSupported() threw:', e.message);
+    }
+    encoder.configure(encoderConfig);
 
     // Why we must decode then re-encode even though the source is already H.264:
     // We need to draw the scoreboard overlay onto every frame. There is no way to
@@ -1748,6 +1758,15 @@ async function doWebCodecsExport() {
 
     console.log('[WC] source codec:', videoTrack.codec, `${width}×${height}`, fps + 'fps',
       videoSamples.length + ' samples', 'decoderConfig:', decoderConfig);
+    try {
+      const decSupport = await VideoDecoder.isConfigSupported(decoderConfig);
+      console.log('[WC] decoder isConfigSupported:', decSupport.supported,
+        '| hw:', decSupport.config?.hardwareAcceleration,
+        '| codec:', decSupport.config?.codec,
+        '| has description:', !!(decSupport.config?.description));
+    } catch (e) {
+      console.warn('[WC] decoder isConfigSupported() threw:', e.message);
+    }
 
     let framesEncoded = 0;
     // Tracks the total output duration placed so far so each new clip is appended
@@ -1796,6 +1815,7 @@ async function doWebCodecsExport() {
       // be decoded without prior context. At each clip boundary the concatenated
       // video must start fresh, so a keyframe is mandatory here.
       let firstOfClip = true;
+      let framesDecodedThisClip = 0;
 
       // Each clip gets its own fresh VideoDecoder so there is no leftover state
       // (reference frames, B-frame buffers) carried over from the previous clip.
@@ -1813,9 +1833,18 @@ async function doWebCodecsExport() {
           // We solve this by reading+resetting firstOfClip synchronously here, before
           // any await, and only for frames that are actually inside the clip window.
           try {
+            framesDecodedThisClip++;
             // Translate the decoder's DTS-based timestamp to display time (CTS).
             const ctsMicros = lookupCts(frame.timestamp);
             const ctsSec    = ctsMicros / 1_000_000;
+            if (framesDecodedThisClip === 1) {
+              console.log(`[WC] clip ${ci} — first decoded frame | format: ${frame.format}`
+                + ` | coded: ${frame.codedWidth}×${frame.codedHeight}`
+                + ` | display: ${frame.displayWidth}×${frame.displayHeight}`
+                + ` | ts: ${frame.timestamp} → ctsSec: ${ctsSec.toFixed(3)}`
+                + ` | colorSpace: ${JSON.stringify(frame.colorSpace)}`
+                + ` | in clip window: ${ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002}`);
+            }
 
             // Only process frames within the clip's display window.
             // Frames before clip.start are pre-roll: the decoder needed them to
@@ -1858,8 +1887,21 @@ async function doWebCodecsExport() {
               // because the compositor there handles the transfer, but using
               // createImageBitmap is correct on all platforms so we do it always.
               const bitmap = await createImageBitmap(frame);
+              if (framesEncoded === 0) {
+                console.log(`[WC] clip ${ci} — first ImageBitmap: ${bitmap.width}×${bitmap.height}`);
+              }
               ctx.drawImage(bitmap, 0, 0, width, height);
               bitmap.close();
+              if (framesEncoded === 0) {
+                // Sample a 4×4 block in the centre of the frame.
+                // If all values are 0, createImageBitmap returned black or drawImage failed.
+                const cx = Math.floor(width / 2), cy = Math.floor(height / 2);
+                const px = ctx.getImageData(cx, cy, 4, 4);
+                const nonZero = Array.from(px.data).some(v => v > 0);
+                console.log(`[WC] clip ${ci} — canvas pixels at centre after drawImage: `
+                  + (nonZero ? 'NON-BLACK ✓' : '⚠ ALL BLACK')
+                  + ' | first 8 bytes: [' + Array.from(px.data.slice(0, 8)).join(', ') + ']');
+              }
 
               // wcScoreAt scans the global `clips` array to count home_point and
               // away_point entries whose end time is ≤ ctsSec (original timeline).
@@ -1871,6 +1913,10 @@ async function doWebCodecsExport() {
               // Wrap the canvas pixels in a VideoFrame for the encoder.
               // VideoFrame is the uncompressed image representation (raw pixel data).
               const vf = new VideoFrame(canvas, { timestamp: outTs });
+              if (framesEncoded === 0) {
+                console.log(`[WC] clip ${ci} — VideoFrame from canvas: `
+                  + `${vf.codedWidth}×${vf.codedHeight}, format: ${vf.format}, ts: ${vf.timestamp}`);
+              }
               try {
                 encoder.encode(vf, { keyFrame });
               } catch (syncErr) {
@@ -1951,6 +1997,7 @@ async function doWebCodecsExport() {
         }
       }
       decoder.close();
+      console.log(`[WC] clip ${ci} summary: decoded=${framesDecodedThisClip}, encoded=${framesEncoded} total so far`);
 
       // Flush the encoder after each clip so all buffered frames are compressed
       // and released from GPU memory before the next clip's decoder starts.
