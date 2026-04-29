@@ -1709,7 +1709,15 @@ async function doWebCodecsExport() {
     // VideoEncoder compresses raw image frames (VideoFrame objects) into
     // H.264 bitstream chunks. Each output chunk is handed to the muxer immediately.
     const encoder = new VideoEncoder({
-      output: (chunk, meta) => { if (!cancelExport) muxer.addVideoChunk(chunk, meta); },
+      output: (chunk, meta) => {
+        if (!cancelExport) {
+          if (lastMuxTs !== -1 && chunk.timestamp < lastMuxTs) {
+            console.warn(`[WC] muxer chunk non-monotonic: prev=${lastMuxTs} cur=${chunk.timestamp} type=${chunk.type}`);
+          }
+          lastMuxTs = chunk.timestamp;
+          muxer.addVideoChunk(chunk, meta);
+        }
+      },
       error: e => {
         encErr = e;
         console.error('[WC] ENCODER ERROR at clip', encErrClip, '—', e.name, e.message, e);
@@ -1828,6 +1836,14 @@ async function doWebCodecsExport() {
     // Tracks the total output duration placed so far so each new clip is appended
     // immediately after the previous one with no gap.
     let cumulativeDuration = 0;
+    // Tracks the last timestamp sent to the encoder across all clips.
+    // Encoder/muxer require strictly increasing DTS. Source videos with B-frames
+    // emit frames from the decoder in DTS order, but CTS (display time) can
+    // be non-monotonic relative to that order — a B-frame decoded third may have
+    // a CTS earlier than the P-frame decoded second. We clamp outTs to always
+    // be at least lastEncodedTs + 1 to keep DTS monotonically increasing.
+    let lastEncodedTs = -1;
+    let lastMuxTs     = -1; // last chunk.timestamp seen by the encoder output callback
 
     for (let ci = 0; ci < clipGroups.length; ci++) {
       if (cancelExport) break;
@@ -1879,21 +1895,22 @@ async function doWebCodecsExport() {
       let firstOfClip = true;
       let framesDecodedThisClip = 0;
 
-      // Each clip gets its own fresh VideoDecoder so there is no leftover state
-      // (reference frames, B-frame buffers) carried over from the previous clip.
-      // Processing happens inside the output callback: we decode → draw to canvas
-      // → overlay scoreboard → encode → close frame, all inline without buffering.
-      // Buffering decoded frames would exhaust GPU memory (~8 MB per 1080p frame).
-      const decoder = new VideoDecoder({
-        output: async (frame) => {
-          // NOTE: this callback is async so we can await createImageBitmap (see below).
-          // JavaScript is single-threaded, so "concurrent" callbacks are really
-          // interleaved at await points — not truly parallel. The key invariant to
-          // preserve is firstOfClip: we must read and reset it before the first
-          // await, otherwise a second frame's callback could start during our await
-          // and both would wrongly see firstOfClip=true, emitting two keyframes.
-          // We solve this by reading+resetting firstOfClip synchronously here, before
-          // any await, and only for frames that are actually inside the clip window.
+      // Queue for sequentially processing decoded frames one at a time.
+      // The Android hardware decoder (MediaCodec) buffers all input and emits all
+      // frames in a burst during flush(). An async output callback would spawn
+      // hundreds of concurrent coroutines, each holding an ~8 MB decoded 1080p
+      // frame — enough to OOM the tab on a 1+ GB video with many clips.
+      // Instead, the synchronous output callback enqueues each frame, and
+      // drainFrames() processes them one at a time so only one live frame exists.
+      const pendingFrames = [];
+      let drainingFrames  = false;
+
+      const drainFrames = async () => {
+        if (drainingFrames) return;
+        drainingFrames = true;
+        console.log(`[WC] clip ${ci} drainFrames — queue depth on entry: ${pendingFrames.length}`);
+        while (pendingFrames.length > 0 && !cancelExport && !encErr) {
+          const frame = pendingFrames.shift();
           try {
             framesDecodedThisClip++;
             // Translate the decoder's DTS-based timestamp to display time (CTS).
@@ -1923,16 +1940,23 @@ async function doWebCodecsExport() {
             if (ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002
                 && !cancelExport && !encErr) {
 
-              // Capture and reset firstOfClip synchronously before the first await.
-              // If we awaited first, another frame callback could run in the gap and
-              // also see firstOfClip=true, causing two keyframes at the clip start.
+              // drainFrames processes frames sequentially (one at a time), so
+              // no other frame is in flight when we reach this point. firstOfClip
+              // can be read and reset here without any race condition.
               const keyFrame = firstOfClip;
               firstOfClip = false;
 
               // Map the frame's original timestamp to its position in the output video.
               // (ctsSec - clip.start)  = how far into this clip this frame is (seconds)
               // + cumulativeDuration   = total duration of all previously exported clips
-              const outTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
+              const rawOutTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
+              const outTs = lastEncodedTs >= 0 && rawOutTs <= lastEncodedTs
+                ? lastEncodedTs + 1
+                : rawOutTs;
+              if (outTs !== rawOutTs) {
+                console.log(`[WC] clip ${ci} outTs clamped: raw=${rawOutTs} → ${outTs} (delta=${rawOutTs - lastEncodedTs}µs, ctsSec=${ctsSec.toFixed(6)})`);
+              }
+              lastEncodedTs = outTs;
 
               // Hardware-decoded VideoFrames on Android are stored in a GPU-resident
               // YUV texture (produced by MediaCodec, the Android hardware codec).
@@ -1987,6 +2011,20 @@ async function doWebCodecsExport() {
               }
               vf.close(); // Release GPU/memory immediately; encoder has its own copy.
               framesEncoded++;
+              // Encoder backpressure: on Android the hardware encoder (MediaCodec)
+              // and decoder share the same resource pool. If we let the encoder queue
+              // grow unbounded (~132 frames), the decoder cannot complete flush() and
+              // hangs indefinitely waiting for those MediaCodec resources to free up.
+              // Yielding here until encodeQueueSize drops to a small number keeps the
+              // encoder draining continuously and leaves decoder resources available.
+              let backpressureYields = 0;
+              while (encoder.encodeQueueSize > 5 && !encErr && !cancelExport) {
+                await wcYield();
+                backpressureYields++;
+              }
+              if (framesEncoded % 20 === 0) {
+                console.log(`[WC] clip ${ci} drainFrames progress — encoded=${framesEncoded}, encodeQ=${encoder.encodeQueueSize}, bpYields=${backpressureYields}`);
+              }
             }
           } catch (e) {
             if (!encErr) { encErr = e; console.error('[WC] frame processing error:', e.name, e.message); }
@@ -1996,6 +2034,22 @@ async function doWebCodecsExport() {
             // will exhaust GPU memory and cause the decoder pipeline to stall.
             frame.close();
           }
+        }
+        // Drop any frames left in the queue (cancel or error path).
+        while (pendingFrames.length > 0) pendingFrames.shift().close();
+        console.log(`[WC] clip ${ci} drainFrames done — totalDecoded=${framesDecodedThisClip}, encErr=${!!encErr}`);
+        drainingFrames = false;
+      };
+
+      // Each clip gets its own fresh VideoDecoder so there is no leftover state
+      // (reference frames, B-frame buffers) carried over from the previous clip.
+      const decoder = new VideoDecoder({
+        output: (frame) => {
+          // Synchronous: just enqueue. drainFrames() does the async work.
+          // This prevents Android's burst-output from spawning hundreds of
+          // concurrent coroutines, each holding an ~8 MB decoded frame in memory.
+          pendingFrames.push(frame);
+          drainFrames(); // intentionally not awaited
         },
         error: e => {
           encErr = e;
@@ -2045,6 +2099,7 @@ async function doWebCodecsExport() {
       console.log(`[WC] clip ${ci} decode loop done: samplesSent=${samplesSent}, decoderState=${decoder.state}`);
 
       if (encErr) throw encErr;
+      console.log(`[WC] clip ${ci} pre-flush — decoded=${framesDecodedThisClip}, encoded=${framesEncoded}, pendingFrames=${pendingFrames.length}, drainingFrames=${drainingFrames}`);
       // flush() signals "no more input" to the decoder and waits until it has
       // emitted all remaining output frames (including buffered B-frames).
       // Three-way race: normal completion, 20 s stall timeout, or user cancel.
@@ -2069,7 +2124,27 @@ async function doWebCodecsExport() {
         }
       }
       console.log(`[WC] clip ${ci} post-flush decoder state: ${decoder.state}`);
-      decoder.close();
+      // decoder.close() is deferred until after the drain wait below.
+      // Closing it here (while drainFrames may still be processing a frame) can
+      // invalidate the GPU texture backing the outstanding VideoFrame on Android,
+      // causing createImageBitmap to hang indefinitely.
+
+      // Wait for the frame queue to finish draining before continuing.
+      // On Android the hardware decoder emits all frames in a burst during flush(),
+      // so drainFrames() is still running asynchronously when flush() resolves.
+      let drainWaitTicks = 0;
+      while ((drainingFrames || pendingFrames.length > 0) && !encErr && !cancelExport) {
+        await wcYield();
+        if (++drainWaitTicks % 200 === 0) {
+          console.log(`[WC] clip ${ci} drain wait spinning — drainingFrames=${drainingFrames}, pendingFrames=${pendingFrames.length}, tick=${drainWaitTicks}`);
+        }
+      }
+      // Drop any leftover frames on the cancel/error path.
+      while (pendingFrames.length > 0) pendingFrames.shift().close();
+      // All outstanding VideoFrames are now closed — safe to close the decoder.
+      if (decoder.state !== 'closed') decoder.close();
+      console.log(`[WC] clip ${ci} post-flush drain complete — decoded=${framesDecodedThisClip}, encoded=${framesEncoded}`);
+
       console.log(`[WC] clip ${ci} summary: decoded=${framesDecodedThisClip}, encoded=${framesEncoded} total so far`);
 
       // Flush the encoder after each clip so all buffered frames are compressed
@@ -2108,6 +2183,10 @@ async function doWebCodecsExport() {
       setProgress(95, 'Muxing audio…');
       const aTs = audioTrack.timescale;
       let audioCumulative = 0;
+      // Same monotonicity requirement as video: samples slightly past clip.end
+      // (within the ±0.002 s filter) get outTs values that overshoot the base for
+      // the next clip, causing the muxer to see a backward DTS at the boundary.
+      let lastAudioTs = -1;
       for (const clip of exportClips) {
         const clipAudio = audioSamples.filter(s => {
           const t = s.cts / (s.timescale || aTs);
@@ -2115,12 +2194,15 @@ async function doWebCodecsExport() {
         });
         for (const s of clipAudio) {
           const t = s.cts / (s.timescale || aTs);
-          // The ±0.002 s filter above can include a sample that starts just before
-          // clip.start. On the first clip (audioCumulative=0) that makes outTs
-          // slightly negative, which the muxer rejects. Clamp to 0.
-          const outTs = Math.max(0, Math.round(((t - clip.start) + audioCumulative) * 1_000_000));
+          const rawOutTs = Math.max(0, Math.round(((t - clip.start) + audioCumulative) * 1_000_000));
+          const outTs = lastAudioTs >= 0 && rawOutTs <= lastAudioTs
+            ? lastAudioTs + 1
+            : rawOutTs;
+          if (outTs !== rawOutTs) {
+            console.log(`[WC] audio outTs clamped at clip boundary: raw=${rawOutTs} → ${outTs}`);
+          }
+          lastAudioTs = outTs;
           // duration: how long this audio frame lasts, in microseconds.
-          // s.duration is in timescale units, so we convert the same way we do for video.
           const outDur = Math.max(1, Math.round(s.duration * 1_000_000 / (s.timescale || aTs)));
           muxer.addAudioChunk(new EncodedAudioChunk({ type: 'key', timestamp: outTs, duration: outDur, data: s.data }), null);
         }
