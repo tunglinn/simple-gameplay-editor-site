@@ -591,6 +591,20 @@
       background: #fff; color: var(--text);
       box-shadow: 0 1px 4px rgba(0,0,0,0.12);
     }
+    .opt-row {
+      display: flex; align-items: center; gap: 10px; cursor: pointer;
+      padding: 10px 14px; border-radius: var(--radius-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      transition: border-color var(--trans);
+    }
+    .opt-row:has(input:checked) { border-color: var(--serve); }
+    .opt-row input[type=checkbox] {
+      width: 17px; height: 17px; flex-shrink: 0;
+      accent-color: var(--serve); cursor: pointer;
+    }
+    .opt-row-label { font-size: 14px; font-weight: 700; color: var(--text); flex: 1; }
+    .opt-row-sub   { font-size: 12px; color: var(--text3); }
+
     .eng-label {
       font-size: 11px; color: var(--text3); text-align: center; font-weight: 600;
       letter-spacing: 0.3px; text-transform: uppercase; margin-bottom: -6px;
@@ -1216,14 +1230,33 @@ function openReview() {
 // ════════════════════════════════════════════════════
 //  EXPORT PANEL
 // ════════════════════════════════════════════════════
-let exportEngine  = 'webcodecs';
-let exportQuality = 'medium';
+let exportEngine          = 'webcodecs';
+let exportQuality         = 'medium';
+let exportHighlightsOnly  = false;
+let exportDisableScoreboard = false;
 
 function selectEngine(e) {
   exportEngine = e;
   const wb = $('eng-webcodecs'), mr = $('eng-recorder');
   if (wb) wb.classList.toggle('active', e === 'webcodecs');
   if (mr) mr.classList.toggle('active', e === 'recorder');
+}
+
+function selectHighlightsOnly(on) {
+  exportHighlightsOnly = on;
+  if (on) {
+    // Default scoreboard off for highlights exports; user can still override.
+    exportDisableScoreboard = true;
+    const cb = $('opt-no-scoreboard');
+    if (cb) cb.checked = true;
+  }
+  // Update highlights count label visibility.
+  const sub = $('opt-highlights-sub');
+  if (sub) sub.style.display = on ? '' : 'none';
+}
+
+function selectDisableScoreboard(on) {
+  exportDisableScoreboard = on;
 }
 
 function selectQuality(q) {
@@ -1297,6 +1330,19 @@ function openExport() {
       <button class="eng-btn ${exportQuality === 'medium' ? 'active' : ''}" id="q-medium" onclick="selectQuality('medium')">Medium</button>
       <button class="eng-btn ${exportQuality === 'high'   ? 'active' : ''}" id="q-high"   onclick="selectQuality('high')">High</button>
     </div>
+
+    <div class="eng-label">Options</div>
+    <label class="opt-row" onclick="selectHighlightsOnly(!$('opt-highlights').checked)">
+      <input type="checkbox" id="opt-highlights" ${exportHighlightsOnly ? 'checked' : ''}
+             onchange="selectHighlightsOnly(this.checked)" onclick="event.stopPropagation()">
+      <span class="opt-row-label">Highlights only</span>
+      <span class="opt-row-sub" id="opt-highlights-sub" style="${exportHighlightsOnly ? '' : 'display:none'}">${highlights} clip${highlights !== 1 ? 's' : ''}</span>
+    </label>
+    <label class="opt-row" onclick="selectDisableScoreboard(!$('opt-no-scoreboard').checked)">
+      <input type="checkbox" id="opt-no-scoreboard" ${exportDisableScoreboard ? 'checked' : ''}
+             onchange="selectDisableScoreboard(this.checked)" onclick="event.stopPropagation()">
+      <span class="opt-row-label">No scoreboard</span>
+    </label>
 
     <button class="dl-btn" onclick="doVideoExport()" style="background:var(--serve)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><polyline points="7 10 10 13 17 8"/></svg>
@@ -1557,11 +1603,18 @@ async function doWebCodecsExport() {
     return;
   }
   // Only export clips that are fully bounded (have both a start AND end time).
+  // When "highlights only" is on, further restrict to clips the user starred.
   // Sort chronologically so clips are concatenated in playback order.
-  const exportClips = clips.filter(c => c.end !== null).sort((a,b) => a.start - b.start);
-  if (!exportClips.length) { toast('No complete clips to export'); return; }
+  const exportClips = clips
+    .filter(c => c.end !== null && (!exportHighlightsOnly || c.highlight))
+    .sort((a, b) => a.start - b.start);
+  if (!exportClips.length) {
+    toast(exportHighlightsOnly ? 'No highlighted clips to export' : 'No complete clips to export');
+    return;
+  }
   if (!videoFile) { toast('No video loaded'); return; }
 
+  const disableScoreboard = exportDisableScoreboard;
   cancelExport = false;
 
   $('export-body').innerHTML = `<div class="export-body">
@@ -1988,12 +2041,12 @@ async function doWebCodecsExport() {
                   + ' | first 8 bytes: [' + Array.from(px.data.slice(0, 8)).join(', ') + ']');
               }
 
-              // wcScoreAt scans the global `clips` array to count home_point and
-              // away_point entries whose end time is ≤ ctsSec (original timeline).
-              // This gives the running score at this exact moment in the game,
-              // which is correct even for clips exported out of their original context.
-              const { h, a } = wcScoreAt(ctsSec);
-              wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+              if (!disableScoreboard) {
+                // wcScoreAt scans the global `clips` array to count home_point and
+                // away_point entries whose end time is ≤ ctsSec (original timeline).
+                const { h, a } = wcScoreAt(ctsSec);
+                wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+              }
 
               // Wrap the canvas pixels in a VideoFrame for the encoder.
               // VideoFrame is the uncompressed image representation (raw pixel data).
@@ -2264,8 +2317,14 @@ function cancelExportFn() {
 async function doMediaRecorderExport() {
   if (!videoFile) { toast('Load a video first'); return; }
 
-  const exportClips = clips.filter(c => c.start !== null && c.end !== null && c.end > c.start);
-  if (!exportClips.length) { toast('No complete clips to export'); return; }
+  const exportClips = clips
+    .filter(c => c.start !== null && c.end !== null && c.end > c.start && (!exportHighlightsOnly || c.highlight))
+    .sort((a, b) => a.start - b.start);
+  if (!exportClips.length) {
+    toast(exportHighlightsOnly ? 'No highlighted clips to export' : 'No complete clips to export');
+    return;
+  }
+  const disableScoreboard = exportDisableScoreboard;
   if (!('MediaRecorder' in window)) { toast('MediaRecorder not supported'); return; }
 
   cancelExport = false;
@@ -2355,7 +2414,7 @@ async function doMediaRecorderExport() {
     const chunks = [];
     recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
 
-    const sortedClips = [...exportClips].sort((a, b) => a.start - b.start);
+    const sortedClips = exportClips; // already sorted
     const totalDuration = sortedClips.reduce((s, c) => s + (c.end - c.start), 0);
     let processedDuration = 0;
 
@@ -2403,8 +2462,10 @@ async function doMediaRecorderExport() {
         const drawFrame = () => {
           if (stopDrawing || cancelExport) return;
           ctx.drawImage(vid, 0, 0, width, height);
-          const { h, a } = wcScoreAt(vid.currentTime);
-          wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+          if (!disableScoreboard) {
+            const { h, a } = wcScoreAt(vid.currentTime);
+            wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+          }
           maybeResume();
           vid.requestVideoFrameCallback(drawFrame);
         };
@@ -2413,8 +2474,10 @@ async function doMediaRecorderExport() {
         const drawLoop = () => {
           if (stopDrawing || cancelExport) return;
           ctx.drawImage(vid, 0, 0, width, height);
-          const { h, a } = wcScoreAt(vid.currentTime);
-          wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+          if (!disableScoreboard) {
+            const { h, a } = wcScoreAt(vid.currentTime);
+            wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+          }
           maybeResume();
           requestAnimationFrame(drawLoop);
         };
