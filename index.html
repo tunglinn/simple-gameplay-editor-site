@@ -868,12 +868,46 @@ function triggerOpen() {
   fileInput.click();
 }
 
-fileInput.addEventListener('change', e => {
+fileInput.addEventListener('change', async e => {
   const file = e.target.files[0];
   if (!file) return;
   if (videoSrc) URL.revokeObjectURL(videoSrc);
-  videoSrc = URL.createObjectURL(file);
   videoFile = file;
+
+  // On Android, File objects are backed by content:// URIs. Chrome streams video
+  // lazily from that URI; Android's MediaStore updates the file's last_modified
+  // on first read, and Chrome then throws ERR_UPLOAD_FILE_CHANGED mid-playback
+  // (~5 s in, when it fetches the next chunk). Copying the bytes into a true
+  // in-memory Blob at load time decouples all subsequent playback and export
+  // from the filesystem entirely. SD card files use a different content provider
+  // that doesn't trigger this, but we copy unconditionally on Android to keep
+  // the code simple.
+  if (/Android/i.test(navigator.userAgent)) {
+    toast(`Loading ${wcFmtSize(file.size)}…`);
+    try {
+      const reader = file.stream().getReader();
+      const chunks = [];
+      let received = 0;
+      let lastPct = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        const pct = Math.round(received / file.size * 100);
+        if (pct >= lastPct + 5) { lastPct = pct; toast(`Loading ${pct}%…`); }
+      }
+      const inMemBlob = new Blob(chunks, { type: file.type || 'video/mp4' });
+      videoSrc = URL.createObjectURL(inMemBlob);
+      console.log(`[load] Android in-memory blob ready — ${wcFmtSize(file.size)}`);
+    } catch (err) {
+      console.warn('[load] in-memory copy failed, using file URL (ERR_UPLOAD_FILE_CHANGED may occur):', err);
+      videoSrc = URL.createObjectURL(file);
+    }
+  } else {
+    videoSrc = URL.createObjectURL(file);
+  }
+
   mainVideo.src = videoSrc;
   // Don't assign editorVideo.src here. On Android, pointing two <video> elements at
   // the same file at the same time forces the browser to open two hardware codec
