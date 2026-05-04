@@ -211,18 +211,20 @@
     }
     .rec-pill {
       display: flex; align-items: center; gap: 7px;
-      background: rgba(0,191,165,0.18);
-      border: 1px solid rgba(0,191,165,0.45);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      border: 1px solid transparent;
       border-radius: 100px; padding: 5px 14px;
-      color: #4ECDC4;
       font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
       max-width: min(44vw, 260px);
-      white-space: nowrap;
-      overflow: hidden;
+      white-space: nowrap; overflow: hidden;
     }
     .rec-pill span { overflow: hidden; text-overflow: ellipsis; }
-    .rec-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--serve); animation: blink 1.1s ease-in-out infinite; }
+    .rec-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; animation: blink 1.1s ease-in-out infinite; }
+    .rec-select {
+      background: transparent; border: none; outline: none; cursor: pointer;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+      min-width: 0; flex: 1; overflow: hidden;
+    }
     @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
 
     /* Spacer */
@@ -1075,20 +1077,46 @@ function updateActionBtns() {
   $('btn-serve').disabled = on;
 }
 
+function hexToRgba(hex, a) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function pillStyle(color) {
+  return `background:${hexToRgba(color, 0.18)};border-color:${hexToRgba(color, 0.45)};color:${color}`;
+}
+
+const POINT_TYPES = ['home_point', 'away_point', 'no_point'];
+
 function refreshRecBar() {
   if (activeClip) {
-    recBar.innerHTML = `<div class="rec-pill"><div class="rec-dot"></div><span>RALLY @ ${fmt(activeClip.start)}${activeClip.highlight ? ' ⭐' : ''}</span></div>`;
+    const col = TC.serve.color;
+    recBar.innerHTML = `<div class="rec-pill" style="${pillStyle(col)}"><div class="rec-dot" style="background:${col}"></div><span>RALLY @ ${fmt(activeClip.start)}${activeClip.highlight ? ' ⭐' : ''}</span></div>`;
     return;
   }
   const cur = editorVideo.currentTime;
-  const POINT_TYPES = ['home_point', 'away_point', 'no_point'];
   const hit = clips.find(c => c.end != null && POINT_TYPES.includes(c.type) && cur >= c.start && cur <= c.end);
   if (hit) {
-    const label = TC[hit.type].label;
-    recBar.innerHTML = `<div class="rec-pill"><div class="rec-dot"></div><span>${label} @ ${fmt(hit.start)}${hit.highlight ? ' ⭐' : ''}</span></div>`;
+    const col = TC[hit.type].color;
+    const star = hit.highlight ? ' ⭐' : '';
+    const opts = POINT_TYPES.map(t => {
+      const label = t === hit.type ? `${TC[t].label} @ ${fmt(hit.start)}${star}` : TC[t].label;
+      return `<option value="${t}"${t === hit.type ? ' selected' : ''}>${label}</option>`;
+    }).join('');
+    recBar.innerHTML = `<div class="rec-pill" style="${pillStyle(col)}"><div class="rec-dot" style="background:${col}"></div><select class="rec-select" style="color:${col}" onchange="changeClipTypeFromBar('${hit.id}',this.value)">${opts}</select></div>`;
   } else {
     recBar.innerHTML = '';
   }
+}
+
+function changeClipTypeFromBar(id, newType) {
+  const clip = clips.find(c => c.id === id);
+  if (!clip || !TC[newType]) return;
+  clip.type = newType;
+  saveHistory();
+  updateScore();
+  if (marksModal.classList.contains('open')) renderMarks();
+  refreshRecBar();
 }
 
 // ════════════════════════════════════════════════════
