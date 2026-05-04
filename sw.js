@@ -3,7 +3,7 @@ const CACHE = 'sportmark-v1';
 const ASSETS = [
   './',
   './index.html',
-  './manifest.json',
+  './manifest.webmanifest',
 ];
 
 self.addEventListener('install', e => {
