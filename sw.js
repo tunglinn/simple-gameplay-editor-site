@@ -3,6 +3,7 @@ const CACHE = 'sportmark-v1';
 const ASSETS = [
   './',
   './index.html',
+  './app.html',
   './manifest.webmanifest',
 ];
 

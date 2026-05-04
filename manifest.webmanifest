@@ -2,7 +2,7 @@
   "name": "SportMark",
   "short_name": "SportMark",
   "description": "Mark and annotate sport videos — serves, points, highlights",
-  "start_url": "./index.html",
+  "start_url": "./app.html",
   "display": "standalone",
   "background_color": "#FFFFFF",
   "theme_color": "#FFFFFF",
