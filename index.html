@@ -954,7 +954,7 @@ function updatePlayIcon() {
 editorVideo.addEventListener('play',  updatePlayIcon);
 editorVideo.addEventListener('pause', updatePlayIcon);
 editorVideo.addEventListener('ended', updatePlayIcon);
-editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); });
+editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); refreshRecBar(); });
 editorVideo.addEventListener('loadedmetadata', () => {
   vidProgress.max = editorVideo.duration || 100;
   syncProgress();
@@ -1078,6 +1078,14 @@ function updateActionBtns() {
 function refreshRecBar() {
   if (activeClip) {
     recBar.innerHTML = `<div class="rec-pill"><div class="rec-dot"></div><span>RALLY @ ${fmt(activeClip.start)}${activeClip.highlight ? ' ⭐' : ''}</span></div>`;
+    return;
+  }
+  const cur = editorVideo.currentTime;
+  const POINT_TYPES = ['home_point', 'away_point', 'no_point'];
+  const hit = clips.find(c => c.end != null && POINT_TYPES.includes(c.type) && cur >= c.start && cur <= c.end);
+  if (hit) {
+    const label = TC[hit.type].label;
+    recBar.innerHTML = `<div class="rec-pill"><div class="rec-dot"></div><span>${label} @ ${fmt(hit.start)}${hit.highlight ? ' ⭐' : ''}</span></div>`;
   } else {
     recBar.innerHTML = '';
   }
