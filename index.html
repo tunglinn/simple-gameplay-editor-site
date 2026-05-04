@@ -1025,7 +1025,7 @@ function pressServe() {
   refreshRecBar();
   updateActionBtns();
   syncDpUpStyle();
-  toast('🟢 Rally started @ ' + fmt(editorVideo.currentTime));
+  // toast('🟢 Rally started @ ' + fmt(editorVideo.currentTime));
 }
 
 function pressPoint(type) {
@@ -1034,7 +1034,7 @@ function pressPoint(type) {
   saveHistory();
   updateScore();
   const labels = { home_point: '🔵 Home Point', away_point: '🔴 Away Point', no_point: '⚫ No Point' };
-  toast(labels[type] || 'Saved');
+  // toast(labels[type] || 'Saved');
 }
 
 function finishActiveClip(endTime, type) {
@@ -1099,7 +1099,7 @@ function undo() {
   updateUndoRedo();
   updateScore();
   if (marksModal.classList.contains('open')) renderMarks();
-  toast('Undo ↩');
+  // toast('Undo ↩');
 }
 
 function redo() {
@@ -1109,7 +1109,7 @@ function redo() {
   updateUndoRedo();
   updateScore();
   if (marksModal.classList.contains('open')) renderMarks();
-  toast('Redo ↪');
+  // toast('Redo ↪');
 }
 
 function updateUndoRedo() {
