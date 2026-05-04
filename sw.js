@@ -1,5 +1,5 @@
-// SportMark Service Worker
-const CACHE = 'sportmark-v1';
+// GamePointLa Service Worker
+const CACHE = 'gamepointla-v1';
 const ASSETS = [
   './',
   './index.html',

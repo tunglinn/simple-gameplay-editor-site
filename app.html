@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>SportMark</title>
+  <title>GamePointLa</title>
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#FFFFFF">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="SportMark">
+  <meta name="apple-mobile-web-app-title" content="GamePointLa">
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
   <script src="export-utils.js?v=2"></script>
@@ -1443,7 +1443,7 @@ function doExport() {
   const a    = document.createElement('a');
   a.href     = url;
   const date = new Date().toISOString().slice(0, 10);
-  a.download = `sportmark_${homeLabel}_${awayLabel}_${date}.json`;
+  a.download = `gamepointla_${homeLabel}_${awayLabel}_${date}.json`;
   a.click();
   URL.revokeObjectURL(url);
   toast('Downloaded ✓');
@@ -2332,7 +2332,7 @@ async function doWebCodecsExport() {
     const a = document.createElement('a');
     a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `sportmark_${homeLabel}_${awayLabel}_${date}.mp4`;
+    a.download = `gamepointla_${homeLabel}_${awayLabel}_${date}.mp4`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

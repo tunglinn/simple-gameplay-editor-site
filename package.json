@@ -1,5 +1,5 @@
 {
-  "name": "sportmark",
+  "name": "gamepointla",
   "private": true,
   "scripts": {
     "test":       "vitest run",

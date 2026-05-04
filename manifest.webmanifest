@@ -1,7 +1,7 @@
 {
-  "name": "SportMark",
-  "short_name": "SportMark",
-  "description": "Mark and annotate sport videos — serves, points, highlights",
+  "name": "GamePointLa",
+  "short_name": "GamePointLa",
+  "description": "Mark and annotate volleyball videos — serves, points, highlights. 啦！",
   "start_url": "./app.html",
   "display": "standalone",
   "background_color": "#FFFFFF",
