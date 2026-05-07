@@ -1733,7 +1733,19 @@ async function doWebCodecsExport() {
     // depend on the Android filesystem permission and stays readable until we call
     // URL.revokeObjectURL() (which only happens on reset or new file load).
     setProgress(5, 'Reading video file…', wcFmtSize(videoFile.size));
-    const fileBuffer = await fetch(videoSrc).then(r => r.arrayBuffer());
+    // Prefer fetching from the blob URL (videoSrc) so we read from the browser's
+    // internal blob store rather than the original file handle.  On Android the
+    // file-picker permission can expire after the screen locks, making
+    // videoFile.arrayBuffer() throw NotReadableError; the blob URL survives that.
+    //
+    // On iOS, however, WebKit throws "Load failed" when fetch() is called on a
+    // blob URL created from a file-input File.  Fall back to arrayBuffer() there.
+    let fileBuffer;
+    try {
+      fileBuffer = await fetch(videoSrc).then(r => r.arrayBuffer());
+    } catch {
+      fileBuffer = await videoFile.arrayBuffer();
+    }
     if (cancelExport) return;
 
     // MP4 is a "container format" — it is a wrapper (like a ZIP) that holds
