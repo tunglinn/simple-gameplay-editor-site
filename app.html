@@ -1663,11 +1663,18 @@ function doReset() {
 let cancelExport = false;
 
 async function doWebCodecsExport() {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   // WebCodecs is a low-level browser API for encoding/decoding video and audio.
-  // It gives direct access to the hardware codec (GPU) rather than going through
-  // the browser's high-level video element. Only available in Chrome/Edge.
+  // On iOS, ALL browsers (including Chrome and Firefox) run on WebKit — Apple
+  // mandates this. WebKit added WebCodecs in Safari 16.4 (iOS 16.4, March 2023).
+  // On older iOS or unsupported WebKit builds this check will fail.
   if (!('VideoEncoder' in window) || !('VideoDecoder' in window)) {
-    toast('WebCodecs not supported — use Chrome or Edge');
+    if (isIOS) {
+      toast('WebCodecs unavailable — on iOS, Chrome runs on WebKit. Requires iOS 16.4+. Try the MediaRecorder engine.');
+    } else {
+      toast('WebCodecs not supported — use Chrome or Edge');
+    }
     return;
   }
   // Only export clips that are fully bounded (have both a start AND end time).
@@ -1797,9 +1804,15 @@ async function doWebCodecsExport() {
     // OffscreenCanvas: a canvas element that lives only in memory, not on the page.
     // We use it to composite each decoded video frame with the scoreboard overlay
     // before passing the combined image to the encoder.
+    if (typeof OffscreenCanvas === 'undefined') {
+      throw new Error('OffscreenCanvas is not available on this browser. Try the MediaRecorder engine.');
+    }
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext('2d');
     console.log('[WC] OffscreenCanvas ctx:', ctx ? 'ok' : '⚠ NULL — all canvas ops will silently no-op');
+    if (!ctx) {
+      throw new Error('OffscreenCanvas.getContext(\'2d\') returned null — browser may not support 2D OffscreenCanvas. Try the MediaRecorder engine.');
+    }
 
     // Configure the muxer with our output tracks and memory target.
     // ArrayBufferTarget: accumulates all muxed bytes into a RAM buffer.
@@ -1864,13 +1877,21 @@ async function doWebCodecsExport() {
       // encode queue small and prevents GPU memory exhaustion across clips.
       latencyMode: 'realtime',
     };
-    try {
-      const encSupport = await VideoEncoder.isConfigSupported(encoderConfig);
+    {
+      const encSupport = await VideoEncoder.isConfigSupported(encoderConfig).catch(e => {
+        console.warn('[WC] encoder isConfigSupported() threw:', e.message);
+        return { supported: null };
+      });
       console.log('[WC] encoder isConfigSupported:', encSupport.supported,
         '| hw:', encSupport.config?.hardwareAcceleration,
         '| codec:', encSupport.config?.codec);
-    } catch (e) {
-      console.warn('[WC] encoder isConfigSupported() threw:', e.message);
+      if (encSupport.supported === false) {
+        throw new Error(
+          `H.264 encoder not supported on this device (${encoderConfig.codec}). ` +
+          (isIOS ? 'WebKit on iOS may not support H.264 video encoding. ' : '') +
+          'Try the MediaRecorder engine.'
+        );
+      }
     }
     encoder.configure(encoderConfig);
 
@@ -2343,31 +2364,50 @@ async function doWebCodecsExport() {
     const outBuffer = muxer.target.buffer;
     const blob = new Blob([outBuffer], { type: 'video/mp4' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `gamepointla_${homeLabel}_${awayLabel}_${date}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Revoke after 30 s, not immediately. a.click() triggers the download
-    // but the browser's download manager picks up the URL asynchronously.
-    // Revoking too early (before the download starts reading the blob) would
-    // make the download fail. 30 s is generous enough for any browser to start.
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    const filename = `gamepointla_${homeLabel}_${awayLabel}_${date}.mp4`;
+    if (isIOS) {
+      // iOS ignores the <a download> attribute — clicking it navigates the current
+      // tab to the blob URL, leaving the app. Open in a new tab instead so the
+      // user can tap the Share button (box with arrow) → Save to Files / Save to Camera Roll.
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 120_000);
+    } else {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Revoke after 30 s, not immediately. a.click() triggers the download
+      // but the browser's download manager picks up the URL asynchronously.
+      // Revoking too early (before the download starts reading the blob) would
+      // make the download fail. 30 s is generous enough for any browser to start.
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    }
 
-    setProgress(100, `✓ Exported — ${wcFmtSize(outBuffer.byteLength)}`,
-      `${framesEncoded} frames · ${exportClips.length} clip${exportClips.length !== 1 ? 's' : ''}`);
+    const metaLine = isIOS
+      ? 'Video opened in new tab — tap Share (⬆) → Save to Files'
+      : `${framesEncoded} frames · ${exportClips.length} clip${exportClips.length !== 1 ? 's' : ''}`;
+    setProgress(100, `✓ Exported — ${wcFmtSize(outBuffer.byteLength)}`, metaLine);
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Done'; cancelBtn.onclick = () => openExport(); }
     $('exp-bar').style.background = 'var(--serve)';
-    toast('Export complete ✓');
+    toast(isIOS ? 'Tap Share → Save to Files in the new tab' : 'Export complete ✓');
 
   } catch (err) {
     console.error('[WC] export failed —', err.name, err.message);
     console.error('[WC] stack:', err.stack);
     const lbl = $('exp-status');
     if (lbl) { lbl.style.color = 'var(--danger)'; lbl.textContent = '⚠ ' + err.message; }
+    const met = $('exp-meta');
+    if (met) {
+      const ua = navigator.userAgent;
+      const browser = /CriOS\//.test(ua) ? 'Chrome/iOS' : /FxiOS\//.test(ua) ? 'Firefox/iOS'
+        : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome'
+        : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Unknown';
+      met.textContent = `${browser} · ${navigator.platform} · ${err.name} — screenshot this and report to developer`;
+    }
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => openExport(); }
   }
