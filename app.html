@@ -1296,6 +1296,12 @@ function selectEngine(e) {
   if (mr) mr.classList.toggle('active', e === 'recorder');
 }
 
+function calcExportDur() {
+  return clips
+    .filter(c => c.end !== null && c.end > c.start && (!exportHighlightsOnly || c.highlight))
+    .reduce((sum, c) => sum + (c.end - c.start), 0);
+}
+
 function selectHighlightsOnly(on) {
   exportHighlightsOnly = on;
   if (on) {
@@ -1307,6 +1313,9 @@ function selectHighlightsOnly(on) {
   // Update highlights count label visibility.
   const sub = $('opt-highlights-sub');
   if (sub) sub.style.display = on ? '' : 'none';
+  // Update live export duration.
+  const durEl = $('meta-export-dur');
+  if (durEl) { const d = calcExportDur(); durEl.textContent = d > 0 ? fmtDur(d) : '—'; }
 }
 
 function selectDisableScoreboard(on) {
@@ -1340,7 +1349,8 @@ function openExport() {
   const highlights = clips.filter(c => c.highlight).length;
   const nopts    = clips.filter(c => c.type === 'no_point').length;
   const serves   = clips.filter(c => c.type === 'serve').length; // incomplete
-  const dur = editorVideo.duration || 0;
+  const dur = (mainVideo.duration) || 0;
+  const exportDur = calcExportDur();
 
   $('export-body').innerHTML = `<div class="export-body">
     <div class="scoreboard">
@@ -1397,6 +1407,10 @@ function openExport() {
              onchange="selectDisableScoreboard(this.checked)" onclick="event.stopPropagation()">
       <span class="opt-row-label">No scoreboard</span>
     </label>
+
+    <div class="meta-card" id="export-summary">
+      <div class="meta-row"><span class="meta-l">Export Duration</span><span class="meta-v" id="meta-export-dur">${exportDur > 0 ? fmtDur(exportDur) : '—'}</span></div>
+    </div>
 
     <button class="dl-btn" onclick="doVideoExport()" style="background:var(--serve)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><polyline points="7 10 10 13 17 8"/></svg>
