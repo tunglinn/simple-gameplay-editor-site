@@ -1349,7 +1349,7 @@ function openExport() {
   const highlights = clips.filter(c => c.highlight).length;
   const nopts    = clips.filter(c => c.type === 'no_point').length;
   const serves   = clips.filter(c => c.type === 'serve').length; // incomplete
-  const dur = (!isNaN(editorVideo.duration) ? editorVideo.duration : mainVideo.duration) || 0;
+  const dur = (mainVideo.duration) || 0;
   const exportDur = calcExportDur();
 
   $('export-body').innerHTML = `<div class="export-body">
