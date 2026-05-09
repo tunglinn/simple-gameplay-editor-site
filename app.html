@@ -2135,7 +2135,13 @@ async function doWebCodecsExport() {
               // H.264 encoder discards (no output chunks, no error). VideoFrame(ImageBitmap)
               // is reliable on all platforms.
               const encodeBitmap = await createImageBitmap(canvas);
-              const vf = new VideoFrame(encodeBitmap, { timestamp: outTs });
+              const imageData = ctx.getImageData(0, 0, width, height);
+              const vf = new VideoFrame(imageData.data.buffer, {
+                  format: 'RGBA',
+                  codedWidth: width,
+                  codedHeight: height,
+                  timestamp: outTs,
+              });
               encodeBitmap.close();
               if (framesEncoded === 0) {
                 console.log(`[WC] clip ${ci} — VideoFrame from canvas: `
