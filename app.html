@@ -2336,7 +2336,7 @@ async function doWebCodecsExport() {
           lastAudioTs = outTs;
           // duration: how long this audio frame lasts, in microseconds.
           const outDur = Math.max(1, Math.round(s.duration * 1_000_000 / (s.timescale || aTs)));
-          muxer.addAudioChunk(new EncodedAudioChunk({ type: 'key', timestamp: outTs, duration: outDur, data: s.data }), null);
+          muxer.addAudioChunkRaw(s.data, 'key', outTs, outDur, null);
         }
         audioCumulative += clip.end - clip.start;
       }
