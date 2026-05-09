@@ -1790,7 +1790,24 @@ async function doWebCodecsExport() {
     // slight A/V sync drift on long exports.
     const fps = Math.round(videoTrack.nb_samples / (videoTrack.duration / timescale));
 
-    setProgress(11, 'Preparing…', `${width}×${height} · ${fps} fps · ${exportClips.length} clip${exportClips.length !== 1 ? 's' : ''}`);
+    // MP4 tkhd box contains a 3×3 affine matrix (stored as 9 16.16 fixed-point values)
+    // that tells the player how to rotate the frame for display. iPhones in particular
+    // record in rotated orientations and rely on this matrix — without it the raw encoded
+    // frame appears upside-down or sideways. We apply the rotation directly onto the canvas
+    // so the re-encoded output is already correctly oriented without needing any metadata.
+    // Matrix layout: [a, b, u,  c, d, v,  tx, ty, w]. Rotation lives in a (m[0]) and b (m[1]).
+    //   a>0, b=0  → 0°   a=0, b>0 → 90° CW
+    //   a<0, b=0  → 180° a=0, b<0 → 270° CW
+    const m = videoTrack.matrix;
+    const trackRotation = m
+      ? (m[0] < 0 ? 180 : m[1] > 0 ? 90 : m[1] < 0 ? 270 : 0)
+      : 0;
+    // For 90°/270° the output canvas is transposed relative to the encoded frame dimensions.
+    const outW = (trackRotation === 90 || trackRotation === 270) ? height : width;
+    const outH = (trackRotation === 90 || trackRotation === 270) ? width : height;
+    console.log(`[WC] track rotation: ${trackRotation}° — encoded: ${width}×${height} → output: ${outW}×${outH}`);
+
+    setProgress(11, 'Preparing…', `${outW}×${outH} · ${fps} fps · ${exportClips.length} clip${exportClips.length !== 1 ? 's' : ''}`);
     await wcYield();
 
     // For each clip, collect the set of compressed video samples that cover it.
@@ -1809,7 +1826,7 @@ async function doWebCodecsExport() {
     // OffscreenCanvas: a canvas element that lives only in memory, not on the page.
     // We use it to composite each decoded video frame with the scoreboard overlay
     // before passing the combined image to the encoder.
-    const canvas = new OffscreenCanvas(width, height);
+    const canvas = new OffscreenCanvas(outW, outH);
     const ctx = canvas.getContext('2d');
     console.log('[WC] OffscreenCanvas ctx:', ctx ? 'ok' : '⚠ NULL — all canvas ops will silently no-op');
 
@@ -1825,7 +1842,7 @@ async function doWebCodecsExport() {
       target: new ArrayBufferTarget(),
       // 'avc' = H.264/AVC (Advanced Video Coding) — the most widely supported
       // video codec. Each compressed frame is a fragment of H.264 bitstream.
-      video: { codec: 'avc', width, height },
+      video: { codec: 'avc', width: outW, height: outH },
       // AAC = Advanced Audio Coding — the standard audio codec inside MP4 files.
       ...(audioTrack ? { audio: {
         codec: 'aac',
@@ -1838,6 +1855,7 @@ async function doWebCodecsExport() {
 
     let encErr = null;
     let encErrClip = -1;
+    let chunksFromEncoder = 0;
     // VideoEncoder compresses raw image frames (VideoFrame objects) into
     // H.264 bitstream chunks. Each output chunk is handed to the muxer immediately.
     const encoder = new VideoEncoder({
@@ -1847,7 +1865,17 @@ async function doWebCodecsExport() {
             console.warn(`[WC] muxer chunk non-monotonic: prev=${lastMuxTs} cur=${chunk.timestamp} type=${chunk.type}`);
           }
           lastMuxTs = chunk.timestamp;
-          muxer.addVideoChunk(chunk, meta);
+          chunksFromEncoder++;
+          const chunkData = new Uint8Array(chunk.byteLength);
+          chunk.copyTo(chunkData);
+          if (chunksFromEncoder === 1) {
+            console.log(`[WC] encoder output callback fired for first time — type=${chunk.type} ts=${chunk.timestamp} byteLength=${chunk.byteLength} copied=${chunkData[0]},${chunkData[1]},${chunkData[2]},${chunkData[3]}`);
+            console.log(`[WC] first chunk meta — decoderConfig present: ${!!(meta && meta.decoderConfig)}, description byteLength: ${meta?.decoderConfig?.description?.byteLength ?? 'none'}`);
+          } else if (chunksFromEncoder % 20 === 0) {
+            console.log(`[WC] encoder output chunks so far: ${chunksFromEncoder}`);
+          }
+          const chunkDuration = chunk.duration ?? Math.round(1_000_000 / fps);
+          muxer.addVideoChunkRaw(chunkData, chunk.type, chunk.timestamp, chunkDuration, meta);
         }
       },
       error: e => {
@@ -1864,9 +1892,9 @@ async function doWebCodecsExport() {
     //   Level 5.0 (avc1.640032) — up to ~589 824 MBs/sec → ~1440p @ 30 fps
     //   Level 5.1 (avc1.640033) — up to ~983 040 MBs/sec → 4K @ 30 fps
     const encoderConfig = {
-      codec: wcPickH264Codec(width, height, fps),
-      width, height,
-      bitrate: getExportBitrate(width, height, fps),
+      codec: wcPickH264Codec(outW, outH, fps),
+      width: outW, height: outH,
+      bitrate: getExportBitrate(outW, outH, fps),
       framerate: fps,
       // 'prefer-hardware' uses the GPU for encoding, which is 10–100x faster than
       // the CPU. If hardware acceleration isn't available, it falls back to software.
@@ -2108,12 +2136,28 @@ async function doWebCodecsExport() {
               if (framesEncoded === 0) {
                 console.log(`[WC] clip ${ci} — first ImageBitmap: ${bitmap.width}×${bitmap.height}`);
               }
-              ctx.drawImage(bitmap, 0, 0, width, height);
+              if (trackRotation === 0) {
+                ctx.drawImage(bitmap, 0, 0, width, height);
+              } else {
+                ctx.save();
+                if (trackRotation === 90) {
+                  ctx.translate(outW, 0);
+                  ctx.rotate(Math.PI / 2);
+                } else if (trackRotation === 180) {
+                  ctx.translate(outW, outH);
+                  ctx.rotate(Math.PI);
+                } else { // 270
+                  ctx.translate(0, outH);
+                  ctx.rotate(-Math.PI / 2);
+                }
+                ctx.drawImage(bitmap, 0, 0, width, height);
+                ctx.restore();
+              }
               bitmap.close();
               if (framesEncoded === 0) {
                 // Sample a 4×4 block in the centre of the frame.
                 // If all values are 0, createImageBitmap returned black or drawImage failed.
-                const cx = Math.floor(width / 2), cy = Math.floor(height / 2);
+                const cx = Math.floor(outW / 2), cy = Math.floor(outH / 2);
                 const px = ctx.getImageData(cx, cy, 4, 4);
                 const nonZero = Array.from(px.data).some(v => v > 0);
                 console.log(`[WC] clip ${ci} — canvas pixels at centre after drawImage: `
@@ -2125,7 +2169,7 @@ async function doWebCodecsExport() {
                 // wcScoreAt scans the global `clips` array to count home_point and
                 // away_point entries whose end time is ≤ ctsSec (original timeline).
                 const { h, a } = wcScoreAt(ctsSec);
-                wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+                wcDrawScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a);
               }
 
               // Wrap the canvas pixels in a VideoFrame for the encoder.
@@ -2166,8 +2210,11 @@ async function doWebCodecsExport() {
                 await wcYield();
                 backpressureYields++;
               }
+              if (framesEncoded === 1) {
+                console.log(`[WC] clip ${ci} — after first encode: encodeQ=${encoder.encodeQueueSize} chunksOut=${chunksFromEncoder} state=${encoder.state}`);
+              }
               if (framesEncoded % 20 === 0) {
-                console.log(`[WC] clip ${ci} drainFrames progress — encoded=${framesEncoded}, encodeQ=${encoder.encodeQueueSize}, bpYields=${backpressureYields}`);
+                console.log(`[WC] clip ${ci} drainFrames progress — encoded=${framesEncoded}, encodeQ=${encoder.encodeQueueSize}, chunksOut=${chunksFromEncoder}, bpYields=${backpressureYields}`);
               }
             }
           } catch (e) {
@@ -2310,7 +2357,9 @@ async function doWebCodecsExport() {
     // Tell the encoder there are no more frames. It drains any internally buffered
     // frames, calling output() for each, before the promise resolves.
     setProgress(93, 'Flushing encoder…');
+    console.log(`[WC] pre-flush — framesEncoded=${framesEncoded}, chunksFromEncoder=${chunksFromEncoder}, encodeQ=${encoder.encodeQueueSize}`);
     await encoder.flush();
+    console.log(`[WC] post-flush — chunksFromEncoder=${chunksFromEncoder}, encodeQ=${encoder.encodeQueueSize}`);
     encoder.close();
 
     // Audio: direct copy — AAC frames from the source are muxed as-is.
@@ -2365,6 +2414,7 @@ async function doWebCodecsExport() {
     muxer.finalize();
 
     const outBuffer = muxer.target.buffer;
+    console.log(`[WC] muxer buffer byteLength: ${outBuffer.byteLength} (${(outBuffer.byteLength / 1024).toFixed(1)} KB)`);
     const blob = new Blob([outBuffer], { type: 'video/mp4' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
