@@ -1868,8 +1868,10 @@ async function doWebCodecsExport() {
           chunksFromEncoder++;
           const chunkData = new Uint8Array(chunk.byteLength);
           chunk.copyTo(chunkData);
+          if (chunksFromEncoder <= 4) {
+            console.log(`[WC] encoder chunk #${chunksFromEncoder} — type=${chunk.type} ts=${chunk.timestamp} dur=${chunk.duration} byteLen=${chunk.byteLength}`);
+          }
           if (chunksFromEncoder === 1) {
-            console.log(`[WC] encoder output callback fired for first time — type=${chunk.type} ts=${chunk.timestamp} byteLength=${chunk.byteLength} copied=${chunkData[0]},${chunkData[1]},${chunkData[2]},${chunkData[3]}`);
             console.log(`[WC] first chunk meta — decoderConfig present: ${!!(meta && meta.decoderConfig)}, description byteLength: ${meta?.decoderConfig?.description?.byteLength ?? 'none'}`);
           } else if (chunksFromEncoder % 20 === 0) {
             console.log(`[WC] encoder output chunks so far: ${chunksFromEncoder}`);
@@ -2075,7 +2077,11 @@ async function doWebCodecsExport() {
             framesDecodedThisClip++;
             // Translate the decoder's DTS-based timestamp to display time (CTS).
             const ctsMicros = lookupCts(frame.timestamp);
+            const ctsHit    = dtsToCts.has(frame.timestamp);
             const ctsSec    = ctsMicros / 1_000_000;
+            if (framesDecodedThisClip <= 6) {
+              console.log(`[WC] clip ${ci} frame ${framesDecodedThisClip}: frame.ts=${frame.timestamp} mapHit=${ctsHit} ctsMicros=${ctsMicros} ctsSec=${ctsSec.toFixed(4)}`);
+            }
             if (framesDecodedThisClip === 1) {
               console.log(`[WC] clip ${ci} — first decoded frame | format: ${frame.format}`
                 + ` | coded: ${frame.codedWidth}×${frame.codedHeight}`
@@ -2106,9 +2112,10 @@ async function doWebCodecsExport() {
               const keyFrame = firstOfClip;
               firstOfClip = false;
 
-              // Map the frame's original timestamp to its position in the output video.
-              // (ctsSec - clip.start)  = how far into this clip this frame is (seconds)
-              // + cumulativeDuration   = total duration of all previously exported clips
+              // Map the frame's CTS to its position in the output video.
+              // Because we sort pendingFrames by CTS before draining, frames arrive
+              // here in display order — so ctsSec is monotonically increasing and
+              // no clamping is needed even for B-frame sources.
               const rawOutTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
               const outTs = lastEncodedTs >= 0 && rawOutTs <= lastEncodedTs
                 ? lastEncodedTs + 1
@@ -2236,11 +2243,10 @@ async function doWebCodecsExport() {
       // (reference frames, B-frame buffers) carried over from the previous clip.
       const decoder = new VideoDecoder({
         output: (frame) => {
-          // Synchronous: just enqueue. drainFrames() does the async work.
-          // This prevents Android's burst-output from spawning hundreds of
-          // concurrent coroutines, each holding an ~8 MB decoded frame in memory.
+          // Synchronous: just enqueue. We drain after decoder.flush() so we can
+          // sort all frames by CTS first, which is required for B-frame sources
+          // where decoded (DTS) order differs from display (CTS) order.
           pendingFrames.push(frame);
-          drainFrames(); // intentionally not awaited
         },
         error: e => {
           encErr = e;
@@ -2320,6 +2326,15 @@ async function doWebCodecsExport() {
       // invalidate the GPU texture backing the outstanding VideoFrame on Android,
       // causing createImageBitmap to hang indefinitely.
 
+      // Sort all decoded frames by CTS (display order) before encoding.
+      // The decoder emits frames in DTS order; for B-frame sources these differ.
+      // Encoding in CTS order gives the encoder monotonically increasing timestamps
+      // so the output video plays at the correct frame rate without any clamping.
+      pendingFrames.sort((a, b) =>
+        (dtsToCts.get(a.timestamp) ?? a.timestamp) - (dtsToCts.get(b.timestamp) ?? b.timestamp));
+      console.log(`[WC] clip ${ci} sorted ${pendingFrames.length} frames by CTS — starting drain`);
+      drainFrames(); // intentionally not awaited
+
       // Wait for the frame queue to finish draining before continuing.
       // On Android the hardware decoder emits all frames in a burst during flush(),
       // so drainFrames() is still running asynchronously when flush() resolves.
@@ -2357,7 +2372,7 @@ async function doWebCodecsExport() {
     // Tell the encoder there are no more frames. It drains any internally buffered
     // frames, calling output() for each, before the promise resolves.
     setProgress(93, 'Flushing encoder…');
-    console.log(`[WC] pre-flush — framesEncoded=${framesEncoded}, chunksFromEncoder=${chunksFromEncoder}, encodeQ=${encoder.encodeQueueSize}`);
+    console.log(`[WC] pre-flush — framesEncoded=${framesEncoded}, chunksFromEncoder=${chunksFromEncoder}, lastChunkTs=${lastMuxTs}, encodeQ=${encoder.encodeQueueSize}`);
     await encoder.flush();
     console.log(`[WC] post-flush — chunksFromEncoder=${chunksFromEncoder}, encodeQ=${encoder.encodeQueueSize}`);
     encoder.close();
