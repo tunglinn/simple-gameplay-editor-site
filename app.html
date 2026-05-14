@@ -1903,6 +1903,12 @@ async function doWebCodecsExport() {
       // many frames for look-ahead analysis ('quality' mode). This keeps the
       // encode queue small and prevents GPU memory exhaustion across clips.
       latencyMode: 'realtime',
+      // Explicitly request AVCC (length-prefixed) output format for H.264.
+      // Without this, Chrome may produce Annex B (start-code prefixed) output
+      // depending on which encoder implementation it selects (hardware vs software).
+      // mp4-muxer expects AVCC — Annex B data stored in an MP4 container produces
+      // an unreadable bitstream ("missing picture in access unit" in ffprobe).
+      avc: { format: 'avc' },
     };
     try {
       const encSupport = await VideoEncoder.isConfigSupported(encoderConfig);
@@ -2087,11 +2093,18 @@ async function doWebCodecsExport() {
           firstOfClip    = false;
 
           const rawOutTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
-          const outTs    = lastEncodedTs >= 0 && rawOutTs <= lastEncodedTs
-            ? lastEncodedTs + 1
-            : rawOutTs;
+          // Two guards in one:
+          //   1. Monotonicity: if rawOutTs didn't advance past the previous frame, clamp up.
+          //   2. Non-negative: muxer rejects negative timestamps; a frame whose CTS lands
+          //      within the ±2 ms clip-start tolerance can produce rawOutTs slightly < 0.
+          //      Clamping to 0 is correct — the frame belongs at the very start of the clip.
+          const outTs = Math.max(0,
+            lastEncodedTs >= 0 && rawOutTs <= lastEncodedTs
+              ? lastEncodedTs + 1
+              : rawOutTs
+          );
           if (outTs !== rawOutTs) {
-            console.log(`[WC] clip ${ci} outTs clamped: raw=${rawOutTs} → ${outTs} (delta=${rawOutTs - lastEncodedTs}µs, ctsSec=${ctsSec.toFixed(6)})`);
+            console.log(`[WC] clip ${ci} outTs adjusted: raw=${rawOutTs} → ${outTs} (lastEncodedTs=${lastEncodedTs}, ctsSec=${ctsSec.toFixed(6)})`);
           }
           lastEncodedTs = outTs;
 
@@ -2194,7 +2207,15 @@ async function doWebCodecsExport() {
           try {
             framesDecodedThisClip++;
             // Translate the decoder's DTS-based timestamp to display time (CTS).
-            const ctsMicros = lookupCts(frame.timestamp);
+            const rawCtsMicros = lookupCts(frame.timestamp);
+            // Guard: CTS must be within 1 s of DTS. B-frame reorder depths are
+            // typically < 200 ms; anything larger indicates a corrupt/missing CTTS
+            // entry that would produce a garbage output timestamp.
+            const ctsMicros = (Number.isFinite(rawCtsMicros)
+              && Math.abs(rawCtsMicros - frame.timestamp) <= 1_000_000)
+              ? rawCtsMicros : frame.timestamp;
+            if (rawCtsMicros !== ctsMicros)
+              console.warn(`[WC] clip ${ci} bad CTS: dts=${frame.timestamp} rawCts=${rawCtsMicros} → using dts`);
             const ctsSec    = ctsMicros / 1_000_000;
             if (framesDecodedThisClip === 1) {
               console.log(`[WC] clip ${ci} — first decoded frame | format: ${frame.format}`
