@@ -1719,45 +1719,13 @@ async function doWebCodecsExport() {
     }
     if (cancelExport) return;
 
-    // Read the entire video file into memory as a raw byte array (ArrayBuffer).
-    // This is needed because MP4Box.js (the parser below) operates on raw bytes.
-    // ⚠ WARNING (memory): keeps the full video file in RAM alongside the output
-    // buffer and decoded frame buffers — can exhaust memory on large files.
-    //
-    // We fetch from the blob URL (videoSrc) rather than calling videoFile.arrayBuffer()
-    // directly. On Android, the File object's path permission is granted once at
-    // file-picker time and can expire if the phone locks or the tab goes to background.
-    // Calling arrayBuffer() after the permission expires throws NotReadableError.
-    // The blob URL was created with URL.createObjectURL() at load time, which copies
-    // the file bytes into the browser's internal blob store — a location that does not
-    // depend on the Android filesystem permission and stays readable until we call
-    // URL.revokeObjectURL() (which only happens on reset or new file load).
-    setProgress(5, 'Reading video file…', wcFmtSize(videoFile.size));
-    // Prefer fetching from the blob URL (videoSrc) so we read from the browser's
-    // internal blob store rather than the original file handle.  On Android the
-    // file-picker permission can expire after the screen locks, making
-    // videoFile.arrayBuffer() throw NotReadableError; the blob URL survives that.
-    //
-    // On iOS, however, WebKit throws "Load failed" when fetch() is called on a
-    // blob URL created from a file-input File.  Fall back to arrayBuffer() there.
-    let fileBuffer;
-    try {
-      fileBuffer = await fetch(videoSrc).then(r => r.arrayBuffer());
-    } catch {
-      fileBuffer = await videoFile.arrayBuffer();
-    }
-    if (cancelExport) return;
-
-    // MP4 is a "container format" — it is a wrapper (like a ZIP) that holds
-    // separate compressed video and audio streams inside "tracks".
-    // wcParseMp4 uses MP4Box.js to read the container structure and extract
-    // every compressed frame ("sample") from each track into plain arrays.
-    // videoTrack / audioTrack: metadata about each stream (dimensions, fps, codec).
-    // videoSamples / audioSamples: the actual compressed data, one entry per frame.
-    // mp4file: the live MP4Box object, needed later to read the codec config.
-    setProgress(9, 'Parsing container…');
-    const { videoTrack, audioTrack, videoSamples, audioSamples, mp4file } =
-      await wcParseMp4(fileBuffer);
+    // Stream the file to MP4Box in chunks — never load the full file into a single
+    // ArrayBuffer.  A 1.6 GB arrayBuffer() call can exhaust the V8 JS heap and crash
+    // the tab before parsing even starts.  Streaming keeps peak memory to one small
+    // chunk at a time while the parser accumulates the extracted sample data.
+    setProgress(5, 'Parsing video file…', wcFmtSize(videoFile.size));
+    const { videoTrack, audioTrack, videoSamples, audioSamples, mp4file, moovBuf } =
+      await wcParseMp4(videoSrc, videoFile);
     if (cancelExport) return;
     if (!videoTrack) throw new Error('No video track found in file');
 
@@ -1964,14 +1932,16 @@ async function doWebCodecsExport() {
       const numParamSets = isHEVC ? desc[22] : (desc[5] & 0x1f);
       if (numParamSets === 0) {
         const boxType = isHEVC ? 'hvcC' : 'avcC';
-        console.warn(`[WC] description has 0 parameter sets — MP4Box failed to parse ${boxType}; scanning raw file bytes`);
-        const rawDesc = wcExtractRawBox(fileBuffer, boxType);
+        console.warn(`[WC] description has 0 parameter sets — MP4Box failed to parse ${boxType}; scanning moov bytes`);
+        // hvcC/avcC is always nested inside moov; we already have moovBuf in memory
+        // so we can scan it directly — no file re-read needed, no permission issues.
+        const rawDesc = moovBuf ? wcExtractRawBox(moovBuf, boxType) : null;
         if (rawDesc) {
           const hex8 = Array.from(rawDesc.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
           console.log(`[WC] raw ${boxType} found: ${rawDesc.byteLength} bytes | first 8: ${hex8}`);
           decoderConfig.description = rawDesc;
         } else {
-          console.warn(`[WC] ⚠ raw ${boxType} not found in file bytes — export will likely fail`);
+          console.warn(`[WC] ⚠ raw ${boxType} not found in moov bytes — export will likely fail`);
         }
       }
     }
@@ -2786,14 +2756,47 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
   ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY);
 }
 
-async function wcParseMp4(arrayBuffer) {
-  return new Promise((resolve, reject) => {
+// Scan the file's top-level box headers (8 bytes each) to locate moov without
+// reading any mdat content.  For a 1.6 GB file this reads ~48 bytes total.
+async function wcFindMoov(file) {
+  let offset = 0;
+  while (offset + 8 <= file.size) {
+    const hdr = new DataView(await file.slice(offset, Math.min(offset + 16, file.size)).arrayBuffer());
+    let size = hdr.getUint32(0, false);
+    const type = String.fromCharCode(hdr.getUint8(4), hdr.getUint8(5), hdr.getUint8(6), hdr.getUint8(7));
+    if (size === 1) {
+      // 64-bit extended size stored in the next 8 bytes
+      size = hdr.getUint32(8, false) * 4294967296 + hdr.getUint32(12, false);
+    } else if (size === 0) {
+      size = file.size - offset; // box extends to EOF
+    }
+    if (type === 'moov') return { start: offset, size };
+    if (size < 8) { console.warn('[WC] wcFindMoov: bad box size', size, 'at offset', offset); break; }
+    offset += size;
+  }
+  return null;
+}
+
+// url   — blob URL (videoSrc); preferred because Android file-picker permissions
+//          can expire, but the blob URL stays readable until revokeObjectURL().
+// file  — File used for targeted moov read and iOS stream fallback.
+async function wcParseMp4(url, file) {
+  const wcMem = () => {
+    if (!performance.memory) return '';
+    const mb = v => (v / 1048576).toFixed(0) + 'MB';
+    return ` heap=${mb(performance.memory.usedJSHeapSize)}/${mb(performance.memory.jsHeapSizeLimit)}`;
+  };
+
+  return new Promise(async (resolve, reject) => {
     const mp4file = MP4Box.createFile();
-    const result = { videoTrack: null, audioTrack: null, videoSamples: [], audioSamples: [], mp4file };
+    const result = { videoTrack: null, audioTrack: null, videoSamples: [], audioSamples: [], mp4file, moovBuf: null };
+
+    console.log(`[WC] wcParseMp4 start${wcMem()}`);
 
     mp4file.onReady = info => {
       result.videoTrack = info.videoTracks[0] || null;
       result.audioTrack = info.audioTracks[0] || null;
+      console.log(`[WC] MP4Box onReady — video=${!!result.videoTrack} audio=${!!result.audioTrack}${wcMem()}`);
       if (result.videoTrack)
         mp4file.setExtractionOptions(result.videoTrack.id, null, { nbSamples: Infinity });
       if (result.audioTrack)
@@ -2801,20 +2804,89 @@ async function wcParseMp4(arrayBuffer) {
       mp4file.start();
     };
 
+    let totalSampleBytes = 0;
     mp4file.onSamples = (id, _ref, samples) => {
-      if (result.videoTrack && id === result.videoTrack.id)
-        result.videoSamples.push(...samples);
-      else if (result.audioTrack && id === result.audioTrack.id)
-        result.audioSamples.push(...samples);
+      const isVideo = result.videoTrack && id === result.videoTrack.id;
+      const arr = isVideo ? result.videoSamples : (result.audioTrack && id === result.audioTrack.id ? result.audioSamples : null);
+      if (!arr) return;
+      for (const s of samples) {
+        arr.push(s);
+        if (isVideo) totalSampleBytes += s.data?.byteLength || 0;
+      }
+      if (isVideo && result.videoSamples.length % 2000 === 0)
+        console.log(`[WC] onSamples: ${result.videoSamples.length} video samples, ${(totalSampleBytes/1048576).toFixed(0)}MB${wcMem()}`);
     };
 
     mp4file.onError = reject;
 
-    const buf = arrayBuffer;
-    buf.fileStart = 0;
-    mp4file.appendBuffer(buf);
-    mp4file.flush();
-    setTimeout(() => resolve(result), 0);
+    try {
+      // Find moov by reading only top-level box headers — reads ~48 bytes total even
+      // for a 1.6 GB file.  Phone recordings put moov at the END of the file; if we
+      // stream sequentially MP4Box buffers all mdat (1.6 GB in the C++ renderer heap)
+      // waiting for moov, then OOMs when moov finally arrives.  Feeding moov first
+      // gives MP4Box the sample table up-front so it extracts and releases each mdat
+      // chunk on-the-fly instead of accumulating them.
+      console.log(`[WC] locating moov${wcMem()}`);
+      const moovInfo = await wcFindMoov(file);
+      console.log(`[WC] moov ${moovInfo ? `offset=${(moovInfo.start/1048576).toFixed(0)}MB size=${(moovInfo.size/1048576).toFixed(1)}MB` : 'NOT FOUND'}${wcMem()}`);
+
+      if (moovInfo) {
+        result.moovBuf = await file.slice(moovInfo.start, moovInfo.start + moovInfo.size).arrayBuffer();
+        result.moovBuf.fileStart = moovInfo.start;
+        mp4file.appendBuffer(result.moovBuf);
+        await new Promise(r => setTimeout(r, 0)); // let onReady fire synchronously
+        console.log(`[WC] moov fed${wcMem()}`);
+      }
+
+      // Stream the file, skipping the moov byte range (already fed above).
+      // Use blob URL (Android-safe); fall back to File.stream() on iOS.
+      let stream;
+      try {
+        stream = (await fetch(url)).body;
+      } catch (e) {
+        console.warn(`[WC] fetch failed (${e.message}), using File.stream()`);
+        stream = file.stream();
+      }
+
+      const moovStart = moovInfo?.start ?? Infinity;
+      const moovEnd   = moovInfo ? moovInfo.start + moovInfo.size : Infinity;
+
+      const reader = stream.getReader();
+      let offset = 0, lastLog = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunkEnd = offset + value.byteLength;
+
+        // Feed the portion before moov (if any of this chunk precedes moov start).
+        if (offset < moovStart) {
+          const end = Math.min(chunkEnd, moovStart);
+          const buf = value.buffer.slice(value.byteOffset, value.byteOffset + (end - offset));
+          buf.fileStart = offset;
+          mp4file.appendBuffer(buf);
+        }
+        // Feed the portion after moov (if any of this chunk follows moov end).
+        if (chunkEnd > moovEnd) {
+          const start = Math.max(offset, moovEnd);
+          const srcOff = start - offset;
+          const buf = value.buffer.slice(value.byteOffset + srcOff, value.byteOffset + srcOff + (chunkEnd - start));
+          buf.fileStart = start;
+          mp4file.appendBuffer(buf);
+        }
+
+        offset = chunkEnd;
+        if (offset - lastLog >= 100 * 1048576) {
+          console.log(`[WC] streamed ${(offset/1048576).toFixed(0)}MB${wcMem()}`);
+          lastLog = offset;
+        }
+      }
+      console.log(`[WC] stream done: ${(offset/1048576).toFixed(0)}MB${wcMem()}`);
+      mp4file.flush();
+      setTimeout(() => resolve(result), 0);
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
