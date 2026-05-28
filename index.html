@@ -219,64 +219,156 @@
     /* HOW IT WORKS */
     .how-section {
       background: var(--surface);
-      padding: 96px 24px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
 
-    .how-inner {
-      max-width: 1040px;
-      margin: 0 auto;
+    .how-header {
+      text-align: center;
+      padding: 48px 24px 20px;
+      flex-shrink: 0;
     }
 
-    .steps {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 32px;
-      margin-top: 48px;
+    .how-header h2 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: clamp(1.6rem, 4vw, 2.8rem);
+      font-weight: 900;
+      margin-top: 8px;
+    }
+
+    .steps-carousel {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .steps-track {
+      flex: 1;
+      position: relative;
+      height: 100%;
+      overflow: hidden;
     }
 
     .step {
+      position: absolute;
+      inset: 0;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 72px;
+      gap: 16px;
+      opacity: 0;
+      transform: translateX(60px);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+      pointer-events: none;
     }
 
-    .step-num {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 3rem;
-      font-weight: 900;
-      color: var(--surface2);
-      line-height: 1;
+    .step.active {
+      opacity: 1;
+      transform: translateX(0);
+      pointer-events: auto;
     }
 
-    .step h3 {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 1.15rem;
-      font-weight: 700;
-    }
-
-    .step p {
-      font-size: 0.9rem;
-      color: var(--text-sub);
+    .step.exit-left {
+      opacity: 0;
+      transform: translateX(-60px);
     }
 
     .step-visual {
-      background: var(--surface2);
-      border-radius: 10px;
-      aspect-ratio: 16/10;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-sub);
-      font-size: 0.85rem;
-      margin-bottom: 8px;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      max-width: 960px;
+      border-radius: 12px;
       overflow: hidden;
+      background: var(--surface2);
     }
 
     .step-visual img {
       width: 100%;
       height: 100%;
-      object-fit: cover;
-      border-radius: 10px;
+      object-fit: contain;
+    }
+
+    .step-text {
+      flex-shrink: 0;
+      text-align: center;
+    }
+
+    .step-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-sub);
+      letter-spacing: 0.1em;
+    }
+
+    .step h3 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.5rem;
+      font-weight: 800;
+      margin: 2px 0 4px;
+    }
+
+    .step p {
+      font-size: 0.9rem;
+      color: var(--text-sub);
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    .carousel-arrow {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 10;
+      background: var(--bg);
+      border: 1px solid var(--surface2);
+      color: var(--text);
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .carousel-arrow:hover { background: var(--surface2); }
+    .carousel-arrow:disabled { opacity: 0.25; cursor: default; }
+    .prev-arrow { left: 16px; }
+    .next-arrow { right: 16px; }
+
+    .carousel-dots {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px 0 24px;
+      flex-shrink: 0;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 1px solid #ccc;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.2s;
+    }
+
+    .dot.active {
+      background: var(--text);
+      border-color: var(--text);
+      transform: scale(1.35);
     }
 
     /* CTA */
@@ -329,8 +421,8 @@
   <nav>
     <a class="nav-logo" href="#">GamePointLa</a>
     <ul class="nav-links">
-      <li><a href="#features">Features</a></li>
       <li><a href="#how-it-works">How it works</a></li>
+      <li><a href="#features">Features</a></li>
       <li><a href="app.html" class="nav-cta">Start editing</a></li>
     </ul>
   </nav>
@@ -343,11 +435,72 @@
     <a href="app.html" class="btn-primary">Start editing</a>
   </section>
 
-  <!-- APP SCREENSHOT -->
+  <!-- HOW IT WORKS -->
+  <div class="how-section" id="how-it-works">
+    <div class="how-header">
+      <p class="section-label">How it works</p>
+      <h2>From raw footage<br>to highlights in minutes.</h2>
+    </div>
+    <div class="steps-carousel">
+      <button class="carousel-arrow prev-arrow" aria-label="Previous step">&#8592;</button>
+      <div class="steps-track">
+        <div class="step active">
+          <div class="step-visual"><img src="img/upload_video.png" alt="Open a video"></div>
+          <div class="step-text">
+            <span class="step-num">01 / 05</span>
+            <h3>Open a video</h3>
+            <p>Pick any video file from your device. No size limit, no upload wait.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-visual"><img src="img/set_names.png" alt="Set player names"></div>
+          <div class="step-text">
+            <span class="step-num">02 / 05</span>
+            <h3>Set player names</h3>
+            <p>Name the players or teams so your markers and exports are easy to identify.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-visual"><img src="img/mark_serve.png" alt="Mark the serve"></div>
+          <div class="step-text">
+            <span class="step-num">03 / 05</span>
+            <h3>Mark the serve</h3>
+            <p>Tap the marker button as the serve happens to drop a marker at that exact moment.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-visual"><img src="img/mark_end.png" alt="Mark the end"></div>
+          <div class="step-text">
+            <span class="step-num">04 / 05</span>
+            <h3>Mark the end</h3>
+            <p>Drop a second marker when the point ends to define the full clip range.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-visual"><img src="img/export.png" alt="Export clips"></div>
+          <div class="step-text">
+            <span class="step-num">05 / 05</span>
+            <h3>Export clips</h3>
+            <p>Choose your markers, set in/out points, and export individual clips or a full highlight reel.</p>
+          </div>
+        </div>
+      </div>
+      <button class="carousel-arrow next-arrow" aria-label="Next step">&#8594;</button>
+    </div>
+    <div class="carousel-dots">
+      <span class="dot active" data-index="0"></span>
+      <span class="dot" data-index="1"></span>
+      <span class="dot" data-index="2"></span>
+      <span class="dot" data-index="3"></span>
+      <span class="dot" data-index="4"></span>
+    </div>
+  </div>
+
+
+  <!-- APP VIDEO TUTORIAL -->
   <div class="hero-visual">
     <div class="screen">
-      <!-- Replace with a real screenshot: <img src="img/screenshot-hero.png" alt="GamePointLa editor"> -->
-      App screenshot
+      <iframe style="width:100%;height:100%;border:none;" src="https://www.youtube.com/embed/ZIPILL4TE3k?si=M9b1xXFENl3zWrN1" title="YouTube video player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
     </div>
   </div>
 
@@ -359,12 +512,12 @@
       <div class="feature-card">
         <div class="feature-icon">🎯</div>
         <h3>One-tap markers</h3>
-        <p>Drop a marker at the exact frame. Label it as a serve, point, highlight, or any custom category.</p>
+        <p>Drop a marker at the exact frame. Label it as a serve, point, and/or highlight.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">✂️</div>
         <h3>Clip &amp; export</h3>
-        <p>Select a range around your markers and export trimmed clips — processed locally, never uploaded.</p>
+        <p>Export all clips or highlights only — processed locally, never uploaded.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">📱</div>
@@ -379,43 +532,6 @@
     </div>
   </section>
 
-  <!-- HOW IT WORKS -->
-  <div class="how-section" id="how-it-works">
-    <div class="how-inner">
-      <p class="section-label">How it works</p>
-      <h2>From raw footage<br>to highlights in minutes.</h2>
-      <div class="steps">
-        <div class="step">
-          <div class="step-visual">
-            <!-- <img src="img/step-1.png" alt="Open a video"> -->
-            Step 1 screenshot
-          </div>
-          <span class="step-num">01</span>
-          <h3>Open a video</h3>
-          <p>Pick any video file from your device. No size limit, no upload wait.</p>
-        </div>
-        <div class="step">
-          <div class="step-visual">
-            <!-- <img src="img/step-2.png" alt="Drop markers"> -->
-            Step 2 screenshot
-          </div>
-          <span class="step-num">02</span>
-          <h3>Drop markers</h3>
-          <p>Tap the marker button as the action happens. Scrub back and reposition with precision.</p>
-        </div>
-        <div class="step">
-          <div class="step-visual">
-            <!-- <img src="img/step-3.png" alt="Export clips"> -->
-            Step 3 screenshot
-          </div>
-          <span class="step-num">03</span>
-          <h3>Export clips</h3>
-          <p>Choose your markers, set in/out points, and export individual clips or a full highlight reel.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- CTA -->
   <section class="cta-section">
     <h2>Ready to mark your game?</h2>
@@ -429,5 +545,64 @@
     <span>Runs entirely in your browser. Your videos never leave your device.</span>
   </footer>
 
+
+<script>
+(function () {
+  const steps = Array.from(document.querySelectorAll('.step'));
+  const dots = Array.from(document.querySelectorAll('.dot'));
+  const prevBtn = document.querySelector('.prev-arrow');
+  const nextBtn = document.querySelector('.next-arrow');
+  let current = 0;
+  let touchStartX = 0;
+  let animating = false;
+
+  function goTo(index, direction) {
+    if (animating || index === current) return;
+    animating = true;
+
+    const incoming = steps[index];
+    const outgoing = steps[current];
+
+    incoming.style.transform = direction > 0 ? 'translateX(60px)' : 'translateX(-60px)';
+    incoming.style.opacity = '0';
+    incoming.style.transition = 'none';
+    incoming.classList.add('active');
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        incoming.style.transition = '';
+        incoming.style.transform = 'translateX(0)';
+        incoming.style.opacity = '1';
+
+        outgoing.style.transform = direction > 0 ? 'translateX(-60px)' : 'translateX(60px)';
+        outgoing.style.opacity = '0';
+
+        dots[current].classList.remove('active');
+        dots[index].classList.add('active');
+        current = index;
+
+        setTimeout(() => {
+          outgoing.classList.remove('active');
+          outgoing.style.transform = '';
+          outgoing.style.opacity = '';
+          outgoing.style.transition = '';
+          animating = false;
+        }, 350);
+      });
+    });
+  }
+
+  prevBtn.addEventListener('click', () => goTo((current - 1 + steps.length) % steps.length, -1));
+  nextBtn.addEventListener('click', () => goTo((current + 1) % steps.length, 1));
+  dots.forEach((dot, i) => dot.addEventListener('click', () => goTo(i, i > current ? 1 : -1)));
+
+  const track = document.querySelector('.steps-track');
+  track.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+  track.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 40) goTo(dx < 0 ? (current + 1) % steps.length : (current - 1 + steps.length) % steps.length, dx < 0 ? 1 : -1);
+  });
+})();
+</script>
 </body>
 </html>
