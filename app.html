@@ -2179,19 +2179,16 @@ async function doWebCodecsExport() {
 
           // Wrap the canvas pixels in a VideoFrame for the encoder.
           // VideoFrame is the uncompressed image representation (raw pixel data).
-          // We must go through createImageBitmap here: new VideoFrame(OffscreenCanvas)
-          // works on Chrome/Android but iOS Safari silently produces a frame the
-          // H.264 encoder discards (no output chunks, no error). VideoFrame(ImageBitmap)
-          // is reliable on all platforms.
-          const encodeBitmap = await createImageBitmap(canvas);
-          const imageData = ctx.getImageData(0, 0, width, height);
+          // We use getImageData → raw buffer rather than VideoFrame(OffscreenCanvas)
+          // because iOS Safari silently discards frames constructed directly from an
+          // OffscreenCanvas, producing no encoder output and no error.
+          const imageData = ctx.getImageData(0, 0, outW, outH);
           const vf = new VideoFrame(imageData.data.buffer, {
               format: 'RGBA',
-              codedWidth: width,
-              codedHeight: height,
+              codedWidth: outW,
+              codedHeight: outH,
               timestamp: outTs,
           });
-          encodeBitmap.close();
           if (framesEncoded === 0) {
             console.log(`[WC] clip ${ci} — VideoFrame from canvas: `
               + `${vf.codedWidth}×${vf.codedHeight}, format: ${vf.format}, ts: ${vf.timestamp}`);
