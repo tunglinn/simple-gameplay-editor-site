@@ -5,10 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>GamePointLa</title>
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="img/icon.png">
+  <link rel="apple-touch-icon" href="img/icon.png">
   <meta name="theme-color" content="#FFFFFF">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="GamePointLa">
+  <meta property="og:image" content="img/icon.png">
+  <meta property="og:title" content="GamePointLa">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:image" content="img/icon.png">
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
   <script src="export-utils.js?v=2"></script>
@@ -71,12 +78,9 @@
     }
 
     .logo {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 20px; font-weight: 900;
-      letter-spacing: -0.5px; color: var(--text);
-      flex-shrink: 0; line-height: 1;
+      flex-shrink: 0;
     }
-    .logo em { color: var(--serve); font-style: normal; }
+    .logo img { height: 32px; width: auto; display: block; }
 
     .team-wrap { flex: 1; position: relative; min-width: 0; }
     .team-input {
@@ -623,7 +627,7 @@
 <div id="main-view">
 
   <div id="header">
-    <div class="logo">GAMEPOINT<em>●</em>LA</div>
+    <div class="logo"><img src="img/icon.png" alt="GamePointLa"></div>
 
     <div class="team-wrap">
       <input class="team-input" id="inp-home" type="text" placeholder="Home Team" maxlength="20" autocomplete="off">
