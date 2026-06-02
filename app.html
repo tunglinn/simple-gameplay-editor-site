@@ -437,39 +437,108 @@
     .rv-star { font-size: 14px; flex-shrink: 0; }
 
     /* Export */
-    .export-body { padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; }
+    .export-body {
+      padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .export-info { display: flex; flex-direction: column; gap: 10px; }
+    .export-settings { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 14px; }
+    .section-head {
+      font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 800;
+      letter-spacing: 1.5px; text-transform: uppercase; color: var(--text3);
+    }
+    .section-chevron { display: none; }
+
+    @media (max-width: 599px) {
+      .section-head {
+        display: flex; align-items: center; justify-content: space-between;
+        cursor: pointer; padding: 2px 0 8px;
+        -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none;
+      }
+      .section-chevron {
+        display: block; width: 16px; height: 16px; stroke-width: 2.5;
+        color: var(--text3); flex-shrink: 0;
+        transition: transform 0.2s ease;
+      }
+      .collapsed .section-chevron { transform: rotate(-90deg); }
+      .export-info.collapsed > *:not(.section-head),
+      .export-settings.collapsed > *:not(.section-head) { display: none; }
+    }
+    .export-settings-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
+    .export-settings-col { display: flex; flex-direction: column; gap: 4px; }
+    .export-dur-note { font-size: 11px; color: var(--text3); text-align: center; font-weight: 600; }
+
+    /* Preview canvas */
+    .preview-wrap {
+      display: block; position: relative;
+      border-radius: var(--radius); overflow: hidden;
+      background: #0a0a0a; flex-shrink: 0;
+    }
+    #preview-canvas { width: 100%; height: auto; display: block; }
+    .preview-label {
+      position: absolute; top: 8px; left: 8px;
+      background: rgba(0,0,0,0.52); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      color: rgba(255,255,255,0.75);
+      font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 800;
+      letter-spacing: 1.2px; text-transform: uppercase;
+      padding: 3px 7px; border-radius: 5px; pointer-events: none;
+    }
+
+    /* Scoreboard style selector */
+    .sb-style-wrap { position: relative; }
+    .sb-style-select {
+      width: 100%; padding: 7px 36px 7px 10px;
+      border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--text3);
+      font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700;
+      letter-spacing: 0.5px; text-transform: uppercase;
+      cursor: not-allowed; appearance: none; -webkit-appearance: none; opacity: 0.65;
+    }
+    .soon-tag {
+      position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+      font-size: 9px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
+      background: var(--surface2); color: var(--text3);
+      padding: 2px 5px; border-radius: 4px; pointer-events: none;
+    }
+
+    .export-sections { display: flex; flex-direction: column; }
+    @media (min-width: 600px) {
+      .export-sections { flex-direction: row; align-items: flex-start; }
+      .export-info { flex: 1; padding-right: 16px; }
+      .export-settings { flex: 1; border-top: none; padding-top: 0; border-left: 1px solid var(--border); padding-left: 16px; }
+    }
 
     .scoreboard {
       background: var(--text); border-radius: var(--radius);
-      padding: 22px 20px; color: #fff; text-align: center;
+      padding: 8px 16px; color: #fff; text-align: center;
     }
-    .sb-heads { display: flex; justify-content: space-between; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
-    .sb-score { font-family: 'Barlow Condensed', sans-serif; font-size: 64px; font-weight: 900; line-height: 1; letter-spacing: -2px; }
+    .sb-heads { display: flex; justify-content: space-between; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 2px; }
+    .sb-score { font-family: 'Barlow Condensed', sans-serif; font-size: 40px; font-weight: 900; line-height: 1; letter-spacing: -2px; }
     .sb-score .sh { color: #82b4ff; }
     .sb-score .sa { color: #ff8a80; }
     .sb-score .sep { color: rgba(255,255,255,0.25); font-weight: 400; margin: 0 6px; }
 
-    .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-    .stat-card { background: var(--surface); border-radius: var(--radius-sm); padding: 14px 10px; text-align: center; }
-    .stat-n { font-family: 'Barlow Condensed', sans-serif; font-size: 34px; font-weight: 900; line-height: 1; }
-    .stat-l { font-size: 11px; color: var(--text2); font-weight: 600; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .stat-card { background: var(--surface); border-radius: var(--radius-sm); padding: 8px 6px; text-align: center; }
+    .stat-n { font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900; line-height: 1; }
+    .stat-l { font-size: 10px; color: var(--text2); font-weight: 600; margin-top: 1px; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    .meta-card { background: var(--surface); border-radius: var(--radius-sm); padding: 4px 14px; }
-    .meta-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .meta-card { background: var(--surface); border-radius: var(--radius-sm); padding: 1px 12px; }
+    .meta-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
     .meta-row:last-child { border-bottom: none; }
     .meta-l { color: var(--text2); font-weight: 500; }
-    .meta-v { color: var(--text); font-weight: 700; text-align: right; max-width: 60%; word-break: break-all; }
+    .meta-v { color: var(--text); font-weight: 700; text-align: right; max-width: 65%; word-break: break-all; }
 
     .dl-btn {
       display: flex; align-items: center; justify-content: center; gap: 10px;
       background: var(--text); color: #fff; border: none;
-      border-radius: var(--radius); padding: 16px;
-      font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 800; letter-spacing: 1px;
+      border-radius: var(--radius); padding: 13px 16px;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 800; letter-spacing: 1px;
       cursor: pointer; width: 100%; text-transform: uppercase;
       transition: opacity var(--trans);
     }
     .dl-btn:active { opacity: 0.8; }
-    .dl-btn svg { width: 20px; height: 20px; stroke-width: 2.2; }
+    .dl-btn svg { width: 18px; height: 18px; stroke-width: 2.2; }
 
     /* ══════════════════════════════════════════
        SNACKBAR
@@ -573,13 +642,13 @@
     .dl-btn-secondary {
       display: flex; align-items: center; justify-content: center; gap: 10px;
       background: var(--surface); color: var(--text);
-      border: 1.5px solid var(--border); border-radius: var(--radius); padding: 14px;
-      font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 800;
+      border: 1.5px solid var(--border); border-radius: var(--radius); padding: 10px 14px;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 800;
       letter-spacing: 1px; cursor: pointer; width: 100%; text-transform: uppercase;
       transition: opacity var(--trans);
     }
     .dl-btn-secondary:active { opacity: 0.7; }
-    .dl-btn-secondary svg { width: 18px; height: 18px; stroke-width: 2.2; }
+    .dl-btn-secondary svg { width: 16px; height: 16px; stroke-width: 2.2; }
 
     /* Engine selector */
     .engine-toggle {
@@ -587,8 +656,8 @@
       border: 1.5px solid var(--border); padding: 3px; gap: 3px;
     }
     .eng-btn {
-      flex: 1; padding: 9px; border-radius: 7px; border: none;
-      font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 800;
+      flex: 1; padding: 7px; border-radius: 7px; border: none;
+      font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 800;
       letter-spacing: 0.5px; cursor: pointer; text-transform: uppercase;
       background: transparent; color: var(--text2);
       transition: background var(--trans), color var(--trans), box-shadow var(--trans);
@@ -599,7 +668,7 @@
     }
     .opt-row {
       display: flex; align-items: center; gap: 10px; cursor: pointer;
-      padding: 10px 14px; border-radius: var(--radius-sm);
+      padding: 7px 12px; border-radius: var(--radius-sm);
       border: 1.5px solid var(--border); background: var(--surface);
       transition: border-color var(--trans);
     }
@@ -608,12 +677,12 @@
       width: 17px; height: 17px; flex-shrink: 0;
       accent-color: var(--serve); cursor: pointer;
     }
-    .opt-row-label { font-size: 14px; font-weight: 700; color: var(--text); flex: 1; }
+    .opt-row-label { font-size: 13px; font-weight: 700; color: var(--text); flex: 1; }
     .opt-row-sub   { font-size: 12px; color: var(--text3); }
 
     .eng-label {
-      font-size: 11px; color: var(--text3); text-align: center; font-weight: 600;
-      letter-spacing: 0.3px; text-transform: uppercase; margin-bottom: -6px;
+      font-size: 10px; color: var(--text3); text-align: center; font-weight: 600;
+      letter-spacing: 0.3px; text-transform: uppercase; margin-bottom: -3px;
     }
 
     /* Scrollbar */
@@ -1322,8 +1391,57 @@ function selectHighlightsOnly(on) {
   if (durEl) { const d = calcExportDur(); durEl.textContent = d > 0 ? fmtDur(d) : '—'; }
 }
 
+function toggleExportSection(which) {
+  if (window.innerWidth >= 600) return;
+  const info = document.querySelector('.export-info');
+  const settings = document.querySelector('.export-settings');
+  if (!info || !settings) return;
+  info.classList.toggle('collapsed', which !== 'info');
+  settings.classList.toggle('collapsed', which !== 'settings');
+}
+
 function selectDisableScoreboard(on) {
   exportDisableScoreboard = on;
+  drawPreview();
+}
+
+function drawPreview() {
+  const canvas = $('preview-canvas');
+  if (!canvas) return;
+  if (!canvas.parentElement.clientWidth) return;
+
+  const video = videoLoaded ? mainVideo : null;
+
+  // Draw at the video's native resolution so wcDrawScoreboard proportions
+  // match the actual export exactly. CSS scales the canvas down to fit.
+  const cW = (video && video.videoWidth)  ? video.videoWidth  : 1280;
+  const cH = (video && video.videoHeight) ? video.videoHeight : 720;
+  canvas.width  = cW;
+  canvas.height = cH;
+  canvas.style.width  = '100%';
+  canvas.style.height = 'auto';
+
+  const ctx = canvas.getContext('2d');
+
+  if (video && video.videoWidth) {
+    ctx.drawImage(video, 0, 0, cW, cH);
+  } else {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, cW, cH);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.font = `700 ${Math.round(cH * 0.06)}px 'Barlow Condensed', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('NO VIDEO LOADED', cW / 2, cH / 2);
+  }
+
+  if (!exportDisableScoreboard) {
+    const homeLabel = $('inp-home').value || 'Home';
+    const awayLabel = $('inp-away').value || 'Away';
+    const homeScore = clips.filter(c => c.type === 'home_point').length;
+    const awayScore = clips.filter(c => c.type === 'away_point').length;
+    wcDrawScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore);
+  }
 }
 
 function selectQuality(q) {
@@ -1356,7 +1474,15 @@ function openExport() {
   const dur = (mainVideo.duration) || 0;
   const exportDur = calcExportDur();
 
+  const isMobile = window.innerWidth < 600;
+  const previewHtml = `<div class="preview-wrap"><canvas id="preview-canvas"></canvas><div class="preview-label">Preview</div></div>`;
+
   $('export-body').innerHTML = `<div class="export-body">
+  ${isMobile ? previewHtml : ''}
+  <div class="export-sections">
+  <div class="export-info${isMobile ? ' collapsed' : ''}">
+    <div class="section-head" onclick="toggleExportSection('info')">Overview<svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
+    ${!isMobile ? previewHtml : ''}
     <div class="scoreboard">
       <div class="sb-heads"><span>${homeLabel.toUpperCase()}</span><span>${awayLabel.toUpperCase()}</span></div>
       <div class="sb-score"><span class="sh">${homeScore}</span><span class="sep">:</span><span class="sa">${awayScore}</span></div>
@@ -1380,26 +1506,40 @@ function openExport() {
     <div class="meta-card">
       <div class="meta-row"><span class="meta-l">Video</span><span class="meta-v">${videoFile ? videoFile.name : '—'}</span></div>
       <div class="meta-row"><span class="meta-l">Duration</span><span class="meta-v">${dur ? fmt(dur) : '—'}</span></div>
-      <div class="meta-row"><span class="meta-l">Home Team</span><span class="meta-v">${homeLabel}</span></div>
-      <div class="meta-row"><span class="meta-l">Away Team</span><span class="meta-v">${awayLabel}</span></div>
-      <div class="meta-row"><span class="meta-l">Incomplete</span><span class="meta-v">${serves}</span></div>
-      <div class="meta-row"><span class="meta-l">Exported</span><span class="meta-v">${new Date().toLocaleString()}</span></div>
+      <div class="meta-row"><span class="meta-l">Incomplete rallies</span><span class="meta-v">${serves}</span></div>
+    </div>
+  </div>
+
+  <div class="export-settings">
+    <div class="section-head" onclick="toggleExportSection('settings')">Export Options<svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
+    <div class="export-settings-col">
+      <div class="eng-label">Scoreboard Style</div>
+      <div class="sb-style-wrap">
+        <select class="sb-style-select" disabled>
+          <option>Classic</option>
+        </select>
+        <span class="soon-tag">Soon</span>
+      </div>
     </div>
 
-    <div class="eng-label">Export Engine</div>
-    <div class="engine-toggle">
-      <button class="eng-btn ${exportEngine === 'webcodecs' ? 'active' : ''}" id="eng-webcodecs" onclick="selectEngine('webcodecs')">WebCodecs</button>
-      <button class="eng-btn ${exportEngine === 'recorder' ? 'active' : ''}" id="eng-recorder" onclick="selectEngine('recorder')">MediaRecorder</button>
+    <div class="export-settings-row">
+      <div class="export-settings-col">
+        <div class="eng-label">Engine</div>
+        <div class="engine-toggle">
+          <button class="eng-btn ${exportEngine === 'webcodecs' ? 'active' : ''}" id="eng-webcodecs" onclick="selectEngine('webcodecs')">WebCodecs</button>
+          <button class="eng-btn ${exportEngine === 'recorder' ? 'active' : ''}" id="eng-recorder" onclick="selectEngine('recorder')">Recorder</button>
+        </div>
+      </div>
+      <div class="export-settings-col">
+        <div class="eng-label">Quality</div>
+        <div class="engine-toggle">
+          <button class="eng-btn ${exportQuality === 'low'    ? 'active' : ''}" id="q-low"    onclick="selectQuality('low')">Low</button>
+          <button class="eng-btn ${exportQuality === 'medium' ? 'active' : ''}" id="q-medium" onclick="selectQuality('medium')">Med</button>
+          <button class="eng-btn ${exportQuality === 'high'   ? 'active' : ''}" id="q-high"   onclick="selectQuality('high')">High</button>
+        </div>
+      </div>
     </div>
 
-    <div class="eng-label">Quality</div>
-    <div class="engine-toggle">
-      <button class="eng-btn ${exportQuality === 'low'    ? 'active' : ''}" id="q-low"    onclick="selectQuality('low')">Low</button>
-      <button class="eng-btn ${exportQuality === 'medium' ? 'active' : ''}" id="q-medium" onclick="selectQuality('medium')">Medium</button>
-      <button class="eng-btn ${exportQuality === 'high'   ? 'active' : ''}" id="q-high"   onclick="selectQuality('high')">High</button>
-    </div>
-
-    <div class="eng-label">Options</div>
     <label class="opt-row" onclick="selectHighlightsOnly(!$('opt-highlights').checked)">
       <input type="checkbox" id="opt-highlights" ${exportHighlightsOnly ? 'checked' : ''}
              onchange="selectHighlightsOnly(this.checked)" onclick="event.stopPropagation()">
@@ -1409,24 +1549,25 @@ function openExport() {
     <label class="opt-row" onclick="selectDisableScoreboard(!$('opt-no-scoreboard').checked)">
       <input type="checkbox" id="opt-no-scoreboard" ${exportDisableScoreboard ? 'checked' : ''}
              onchange="selectDisableScoreboard(this.checked)" onclick="event.stopPropagation()">
-      <span class="opt-row-label">No scoreboard</span>
+      <span class="opt-row-label">No scoreboard overlay</span>
     </label>
 
-    <div class="meta-card" id="export-summary">
-      <div class="meta-row"><span class="meta-l">Export Duration</span><span class="meta-v" id="meta-export-dur">${exportDur > 0 ? fmtDur(exportDur) : '—'}</span></div>
-    </div>
+    <div class="export-dur-note"><span id="meta-export-dur">${exportDur > 0 ? fmtDur(exportDur) : '—'}</span> to export</div>
 
+    <button class="dl-btn-secondary" onclick="doExport()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Save Markers
+    </button>
     <button class="dl-btn" onclick="doVideoExport()" style="background:var(--serve)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><polyline points="7 10 10 13 17 8"/></svg>
       Export Video
     </button>
-    <button class="dl-btn-secondary" onclick="doExport()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Download JSON
-    </button>
+  </div>
+  </div>
   </div>`;
 
   $('export-panel').classList.add('open');
+  requestAnimationFrame(() => requestAnimationFrame(() => drawPreview()));
 }
 
 function doExport() {
