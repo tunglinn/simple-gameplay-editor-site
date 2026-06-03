@@ -975,6 +975,22 @@ $('video-area').addEventListener('click', () => {
   else { mainVideo.paused ? mainVideo.play() : mainVideo.pause(); }
 });
 
+// ── Android auto-pause recovery ──────────────────────
+// Chrome Android fires `waiting` then auto-pauses the video under memory
+// pressure even when the full buffer is available (ready=2). `_autoStalled`
+// distinguishes this from a deliberate user pause so we only auto-resume
+// when Chrome caused the pause, not the user.
+let _autoStalled = false;
+mainVideo.addEventListener('waiting', () => { _autoStalled = true; });
+mainVideo.addEventListener('playing', () => { _autoStalled = false; });
+mainVideo.addEventListener('pause', () => {
+  if (_autoStalled) {
+    _autoStalled = false;
+    setTimeout(() => mainVideo.play().catch(() => {}), 300);
+  }
+});
+// ─────────────────────────────────────────────────────
+
 // ════════════════════════════════════════════════════
 //  EDITOR OPEN / CLOSE
 // ════════════════════════════════════════════════════
@@ -3106,6 +3122,49 @@ function wcBuildDecoderConfig(videoTrack, mp4file) {
 
 // Init
 updateUndoRedo();
+
+// ── On-screen debug console ──────────────────────────
+(function() {
+  const panel = document.createElement('div');
+  panel.id = 'dbg-panel';
+  panel.style.cssText = 'position:fixed;bottom:0;left:0;right:0;height:38vh;background:rgba(0,0,0,0.85);color:#0f0;font:11px/1.4 monospace;overflow-y:auto;z-index:99999;padding:6px 6px 28px;pointer-events:auto;display:none;';
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕ close';
+  closeBtn.style.cssText = 'position:sticky;bottom:0;display:block;width:100%;background:#222;color:#aaa;border:none;padding:4px;font:bold 11px monospace;cursor:pointer;text-align:center;';
+  closeBtn.onclick = toggleDbg;
+  panel.appendChild(closeBtn);
+  document.body.appendChild(panel);
+
+  function toggleDbg() {
+    panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  }
+
+  // Invisible 44×44px zone — bottom-left corner, above all overlays.
+  // Long-press 800ms to toggle the panel.
+  const zone = document.createElement('div');
+  zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:99998;';
+  document.body.appendChild(zone);
+  let _zoneTimer = null;
+  zone.addEventListener('pointerdown', () => {
+    _zoneTimer = setTimeout(toggleDbg, 800);
+  });
+  ['pointerup', 'pointercancel', 'pointermove'].forEach(e =>
+    zone.addEventListener(e, () => clearTimeout(_zoneTimer))
+  );
+
+  ['log','warn','error'].forEach(level => {
+    const orig = console[level].bind(console);
+    console[level] = (...args) => {
+      orig(...args);
+      const line = document.createElement('div');
+      line.style.color = level === 'error' ? '#f66' : level === 'warn' ? '#fa0' : '#0f0';
+      line.textContent = args.join(' ');
+      panel.insertBefore(line, closeBtn);
+      panel.scrollTop = panel.scrollHeight;
+    };
+  });
+})();
+// ─────────────────────────────────────────────────────
 </script>
 </body>
 </html>
