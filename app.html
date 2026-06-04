@@ -795,11 +795,11 @@
   <div id="ed-controls">
     <!-- D-pad -->
     <div id="dpad">
-      <button class="dp" onclick="prevMark()" title="Previous Mark">
+      <button class="dp" id="dp-prev" onclick="prevMark()" title="Previous Mark" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="6" y1="6" x2="6" y2="18"/><polyline points="13 7 7 12 13 17"/></svg>
       </button>
       <button class="dp" id="dp-up" onclick="dUp()" title="Toggle Highlight (U)">⭐</button>
-      <button class="dp" onclick="nextMark()" title="Next Mark">
+      <button class="dp" id="dp-next" onclick="nextMark()" title="Next Mark" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="11 7 17 12 11 17"/><line x1="18" y1="6" x2="18" y2="18"/></svg>
       </button>
 
@@ -927,6 +927,8 @@ const recBar      = $('rec-bar');
 const vidProgress = $('vid-progress');
 const playIcon    = $('play-icon');
 const dpUp        = $('dp-up');
+const dpPrev      = $('dp-prev');
+const dpNext      = $('dp-next');
 const marksModal  = $('marks-modal');
 const marksScroll = $('marks-scroll');
 const snack       = $('snack');
@@ -1050,7 +1052,7 @@ function updatePlayIcon() {
 editorVideo.addEventListener('play',  updatePlayIcon);
 editorVideo.addEventListener('pause', updatePlayIcon);
 editorVideo.addEventListener('ended', updatePlayIcon);
-editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); refreshRecBar(); });
+editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); refreshRecBar(); syncNavBtns(); });
 editorVideo.addEventListener('loadedmetadata', () => {
   vidProgress.max = editorVideo.duration || 100;
   syncProgress();
@@ -1111,6 +1113,7 @@ function prevMark() {
   } else {
     const prev = desc.find(t => t < (clipStart ?? cur) - 0.1);
     if (prev != null) seekTo(prev);
+    else if (clipStart != null) seekTo(clipStart);
   }
 }
 
@@ -1177,6 +1180,14 @@ function updateActionBtns() {
   $('btn-away').disabled = !on;
   $('btn-serve').disabled = on;
   dpUp.disabled = !on;
+  syncNavBtns();
+}
+
+function syncNavBtns() {
+  const cur = editorVideo.currentTime;
+  const allStarts = clips.map(c => c.start).concat(activeClip ? [activeClip.start] : []);
+  dpPrev.disabled = allStarts.length === 0;
+  dpNext.disabled = !allStarts.some(t => t > cur + 0.1);
 }
 
 function hexToRgba(hex, a) {
