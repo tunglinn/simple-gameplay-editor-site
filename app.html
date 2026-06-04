@@ -981,12 +981,16 @@ $('video-area').addEventListener('click', () => {
 // distinguishes this from a deliberate user pause so we only auto-resume
 // when Chrome caused the pause, not the user.
 let _autoStalled = false;
-mainVideo.addEventListener('waiting', () => { _autoStalled = true; });
+mainVideo.addEventListener('waiting', () => {
+  _autoStalled = true;
+  console.warn(`[stall] waiting at ${mainVideo.currentTime.toFixed(2)}s ready=${mainVideo.readyState}`);
+});
 mainVideo.addEventListener('playing', () => { _autoStalled = false; });
 mainVideo.addEventListener('pause', () => {
   if (_autoStalled) {
     _autoStalled = false;
-    setTimeout(() => mainVideo.play().catch(() => {}), 300);
+    console.warn(`[stall] auto-paused at ${mainVideo.currentTime.toFixed(2)}s — recovering`);
+    setTimeout(() => mainVideo.play().catch(e => console.error('[stall] recovery failed:', e)), 300);
   }
 });
 // ─────────────────────────────────────────────────────
