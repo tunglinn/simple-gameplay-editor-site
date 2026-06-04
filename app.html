@@ -316,6 +316,7 @@
     .dp.center { background: rgba(255,255,255,0.18); font-size: 16px; }
     .dp-empty { background: transparent !important; pointer-events: none; }
     .dp.star-on { background: rgba(255,171,0,0.3); color: var(--highlight); }
+    .dp:disabled { opacity: 0.28; cursor: default; }
     .dp svg { width: 18px; height: 18px; stroke-width: 2.2; pointer-events: none; }
 
     /* Action pad */
@@ -1168,6 +1169,7 @@ function updateActionBtns() {
   $('btn-nopt').disabled = !on;
   $('btn-away').disabled = !on;
   $('btn-serve').disabled = on;
+  dpUp.disabled = !on;
 }
 
 function hexToRgba(hex, a) {
@@ -1657,7 +1659,7 @@ document.addEventListener('keydown', e => {
   switch (key) {
     case 'ArrowLeft':  e.preventDefault(); dLeft();  break;
     case 'ArrowRight': e.preventDefault(); dRight(); break;
-    case 'ArrowUp':    e.preventDefault(); dUp();    break;
+    case 'ArrowUp':    e.preventDefault(); if (!dpUp.disabled) dUp(); break;
     case 'ArrowDown':  e.preventDefault(); dDown();  break;
     case ' ':          e.preventDefault(); togglePlay(); break;
     case 's': case 'S': pressServe(); break;
