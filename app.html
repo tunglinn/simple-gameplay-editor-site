@@ -3142,13 +3142,19 @@ updateUndoRedo();
   // Invisible 44×44px zone — bottom-left corner, above all overlays.
   // Long-press 800ms to toggle the panel.
   const zone = document.createElement('div');
-  zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:99998;';
+  zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:99998;-webkit-touch-callout:none;user-select:none;touch-action:none;';
+  zone.addEventListener('contextmenu', e => e.preventDefault());
   document.body.appendChild(zone);
-  let _zoneTimer = null;
-  zone.addEventListener('pointerdown', () => {
+  let _zoneTimer = null, _zoneX = 0, _zoneY = 0;
+  zone.addEventListener('pointerdown', e => {
+    _zoneX = e.clientX; _zoneY = e.clientY;
     _zoneTimer = setTimeout(toggleDbg, 800);
   });
-  ['pointerup', 'pointercancel', 'pointermove'].forEach(e =>
+  zone.addEventListener('pointermove', e => {
+    if (Math.abs(e.clientX - _zoneX) > 10 || Math.abs(e.clientY - _zoneY) > 10)
+      clearTimeout(_zoneTimer);
+  });
+  ['pointerup', 'pointercancel'].forEach(e =>
     zone.addEventListener(e, () => clearTimeout(_zoneTimer))
   );
 
