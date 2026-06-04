@@ -1101,10 +1101,17 @@ function dUp() {
 function dDown() { openMarks(); }
 
 function prevMark() {
+  const THRESHOLD = 2;
   const cur = editorVideo.currentTime;
   const times = clips.map(c => c.start).concat(activeClip ? [activeClip.start] : []).sort((a, b) => a - b);
-  const t = [...times].reverse().find(t => t < cur - 0.1);
-  if (t != null) seekTo(t);
+  const desc = [...times].reverse();
+  const clipStart = desc.find(t => t <= cur + 0.1);
+  if (clipStart != null && cur - clipStart > THRESHOLD) {
+    seekTo(clipStart);
+  } else {
+    const prev = desc.find(t => t < (clipStart ?? cur) - 0.1);
+    if (prev != null) seekTo(prev);
+  }
 }
 
 function nextMark() {
