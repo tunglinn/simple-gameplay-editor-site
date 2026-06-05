@@ -1395,7 +1395,7 @@ let exportEngine          = 'webcodecs';
 let exportQuality         = 'medium';
 let exportHighlightsOnly  = false;
 let exportDisableScoreboard = false;
-let exportScoreboardStyle    = 'classic'; // 'classic' | 'espn'
+let exportScoreboardStyle    = 'classic'; // 'classic' | 'box'
 let exportScoreboardPosition = { v: 'top', h: 'left' }; // v: top|bottom, h: left|center|right
 let exportCombined        = false;
 
@@ -1451,12 +1451,12 @@ function selectDisableScoreboard(on) {
 
 function selectScoreboardStyle(style) {
   exportScoreboardStyle = style;
-  ['classic', 'espn'].forEach(s => {
+  ['classic', 'box'].forEach(s => {
     const btn = $('sb-style-' + s);
     if (btn) btn.classList.toggle('active', s === style);
   });
   const posWrap = $('sb-position-wrap');
-  if (posWrap) posWrap.style.display = style === 'espn' ? '' : 'none';
+  if (posWrap) posWrap.style.display = style === 'box' ? '' : 'none';
   drawPreview();
 }
 
@@ -1598,11 +1598,11 @@ function openExport() {
       <div class="eng-label">Scoreboard Style</div>
       <div class="engine-toggle">
         <button class="eng-btn ${exportScoreboardStyle === 'classic' ? 'active' : ''}" id="sb-style-classic" onclick="selectScoreboardStyle('classic')">Classic</button>
-        <button class="eng-btn ${exportScoreboardStyle === 'espn'    ? 'active' : ''}" id="sb-style-espn"    onclick="selectScoreboardStyle('espn')">ESPN</button>
+        <button class="eng-btn ${exportScoreboardStyle === 'box'    ? 'active' : ''}" id="sb-style-box"    onclick="selectScoreboardStyle('box')">box</button>
       </div>
     </div>
 
-    <div class="export-settings-col" id="sb-position-wrap" style="${exportScoreboardStyle !== 'espn' ? 'display:none' : ''}">
+    <div class="export-settings-col" id="sb-position-wrap" style="${exportScoreboardStyle !== 'box' ? 'display:none' : ''}">
       <div class="eng-label">Position</div>
       <div class="engine-toggle" style="margin-bottom:4px">
         <button class="eng-btn ${exportScoreboardPosition.v === 'top'    ? 'active' : ''}" id="sb-pos-top"    onclick="selectScoreboardPosition('v','top')">Top</button>
@@ -3170,7 +3170,7 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
   ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY);
 }
 
-function wcDrawScoreboardESPN(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vPos = 'top', hPos = 'left') {
+function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vPos = 'top', hPos = 'left') {
   const rowH    = Math.max(22, Math.round(h * 0.052));
   const boxW    = Math.round(w * 0.24);
   const boxH    = rowH * 2;
@@ -3241,8 +3241,8 @@ function wcDrawActiveScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awaySc
   const s  = style ?? exportScoreboardStyle;
   const vp = vPos  ?? exportScoreboardPosition.v;
   const hp = hPos  ?? exportScoreboardPosition.h;
-  if (s === 'espn') {
-    wcDrawScoreboardESPN(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vp, hp);
+  if (s === 'box') {
+    wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vp, hp);
   } else {
     wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore);
   }
