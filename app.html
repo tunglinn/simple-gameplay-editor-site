@@ -914,6 +914,7 @@ let clipSeq = 0;         // unique ID counter
 let videoSrc = '';       // object URL
 let videoFile = null;    // File reference
 let videoLoaded = false;
+let retryExportAfterReopen = false;
 
 // ════════════════════════════════════════════════════
 //  DOM
@@ -971,6 +972,10 @@ fileInput.addEventListener('change', e => {
   videoLoaded = true;
   fileInput.value = '';
   toast('Video loaded ✓');
+  if (retryExportAfterReopen) {
+    retryExportAfterReopen = false;
+    doVideoExport();
+  }
 });
 
 $('video-area').addEventListener('click', () => {
@@ -2708,6 +2713,7 @@ async function doWebCodecsExport() {
     if (lbl) { lbl.style.color = 'var(--danger)'; lbl.textContent = '⚠ ' + err.message; }
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => openExport(); }
+    if (isFileAccessError(err)) showReopenVideoButton();
   }
 }
 
@@ -2715,6 +2721,21 @@ function cancelExportFn() {
   cancelExport = true;
   openExport();
   toast('Export cancelled');
+}
+
+function isFileAccessError(err) {
+  return err.message.includes('no longer accessible') || err.message.includes('Failed to load video');
+}
+
+function showReopenVideoButton() {
+  const body = $('export-body');
+  if (!body) return;
+  const btn = document.createElement('button');
+  btn.className = 'btn-primary';
+  btn.style.cssText = 'margin-top:12px;width:100%';
+  btn.textContent = 'Open Video';
+  btn.onclick = () => { retryExportAfterReopen = true; triggerOpen(); };
+  body.appendChild(btn);
 }
 
 // ════════════════════════════════════════════════════
@@ -2959,6 +2980,7 @@ async function doMediaRecorderExport() {
     if (lbl) { lbl.style.color = 'var(--danger)'; lbl.textContent = '⚠ ' + err.message; }
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => openExport(); }
+    if (isFileAccessError(err)) showReopenVideoButton();
   }
 }
 
