@@ -78,9 +78,15 @@
     }
 
     .logo {
-      flex-shrink: 0;
+      flex-shrink: 0; display: flex; align-items: center; gap: 7px; text-decoration: none;
     }
     .logo img { height: 32px; width: auto; display: block; }
+    .logo-url {
+      font-family: 'Cy Grotesk Key', 'Barlow Condensed', sans-serif;
+      font-size: 13px; font-weight: 700; color: var(--text);
+      letter-spacing: 0.2px; white-space: nowrap; line-height: 1;
+    }
+    @media (max-width: 420px) { .logo-url { display: none; } }
 
     .team-wrap { flex: 1; position: relative; min-width: 0; }
     .team-input {
@@ -697,7 +703,9 @@
 <div id="main-view">
 
   <div id="header">
-    <div class="logo"><img src="img/icon.png" alt="GamePointLa"></div>
+    <div class="logo">
+      <img src="img/icon.png" alt="GamePointLa">
+    </div>
 
     <div class="team-wrap">
       <input class="team-input" id="inp-home" type="text" placeholder="Home Team" maxlength="20" autocomplete="off">
@@ -1406,6 +1414,10 @@ let exportEngine          = 'webcodecs';
 let exportQuality         = 'medium';
 let exportHighlightsOnly  = false;
 let exportDisableScoreboard = false;
+let exportDisableWatermark  = false;
+
+const _watermarkImg = new Image();
+_watermarkImg.src = 'img/icon.png';
 
 function selectEngine(e) {
   exportEngine = e;
@@ -1450,6 +1462,11 @@ function selectDisableScoreboard(on) {
   drawPreview();
 }
 
+function selectDisableWatermark(on) {
+  exportDisableWatermark = on;
+  drawPreview();
+}
+
 function drawPreview() {
   const canvas = $('preview-canvas');
   if (!canvas) return;
@@ -1486,6 +1503,9 @@ function drawPreview() {
     const homeScore = clips.filter(c => c.type === 'home_point').length;
     const awayScore = clips.filter(c => c.type === 'away_point').length;
     wcDrawScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore);
+  }
+  if (!exportDisableWatermark) {
+    wcDrawWatermark(ctx, cW, cH, _watermarkImg.complete && _watermarkImg.naturalWidth ? _watermarkImg : null);
   }
 }
 
@@ -1595,6 +1615,11 @@ function openExport() {
       <input type="checkbox" id="opt-no-scoreboard" ${exportDisableScoreboard ? 'checked' : ''}
              onchange="selectDisableScoreboard(this.checked)" onclick="event.stopPropagation()">
       <span class="opt-row-label">No scoreboard overlay</span>
+    </label>
+    <label class="opt-row" onclick="selectDisableWatermark(!$('opt-no-watermark').checked)">
+      <input type="checkbox" id="opt-no-watermark" ${exportDisableWatermark ? 'checked' : ''}
+             onchange="selectDisableWatermark(this.checked)" onclick="event.stopPropagation()">
+      <span class="opt-row-label">No watermark</span>
     </label>
 
     <div class="export-dur-note"><span id="meta-export-dur">${exportDur > 0 ? fmtDur(exportDur) : '—'}</span> to export</div>
@@ -1873,6 +1898,12 @@ async function doWebCodecsExport() {
   if (!videoFile) { toast('No video loaded'); return; }
 
   const disableScoreboard = exportDisableScoreboard;
+  const disableWatermark  = exportDisableWatermark;
+  // Ensure the watermark image is ready before encoding starts.
+  if (!disableWatermark && !_watermarkImg.complete) {
+    await new Promise(r => { _watermarkImg.onload = r; _watermarkImg.onerror = r; });
+  }
+  const watermarkLogo = (!disableWatermark && _watermarkImg.naturalWidth) ? _watermarkImg : null;
   cancelExport = false;
 
   $('export-body').innerHTML = `<div class="export-body">
@@ -2367,6 +2398,7 @@ async function doWebCodecsExport() {
             const { h, a } = wcScoreAt(ctsSec);
             wcDrawScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a);
           }
+          if (!disableWatermark) wcDrawWatermark(ctx, outW, outH, watermarkLogo);
 
           // Wrap the canvas pixels in a VideoFrame for the encoder.
           // VideoFrame is the uncompressed image representation (raw pixel data).
@@ -2757,6 +2789,11 @@ async function doMediaRecorderExport() {
     return;
   }
   const disableScoreboard = exportDisableScoreboard;
+  const disableWatermark  = exportDisableWatermark;
+  if (!disableWatermark && !_watermarkImg.complete) {
+    await new Promise(r => { _watermarkImg.onload = r; _watermarkImg.onerror = r; });
+  }
+  const watermarkLogo = (!disableWatermark && _watermarkImg.naturalWidth) ? _watermarkImg : null;
   if (!('MediaRecorder' in window)) { toast('MediaRecorder not supported'); return; }
 
   cancelExport = false;
@@ -2898,6 +2935,7 @@ async function doMediaRecorderExport() {
             const { h, a } = wcScoreAt(vid.currentTime);
             wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
           }
+          if (!disableWatermark) wcDrawWatermark(ctx, width, height, watermarkLogo);
           maybeResume();
           vid.requestVideoFrameCallback(drawFrame);
         };
@@ -2910,6 +2948,7 @@ async function doMediaRecorderExport() {
             const { h, a } = wcScoreAt(vid.currentTime);
             wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
           }
+          if (!disableWatermark) wcDrawWatermark(ctx, width, height, watermarkLogo);
           maybeResume();
           requestAnimationFrame(drawLoop);
         };
@@ -2999,6 +3038,22 @@ function wcScoreAt(tSec) {
   const h = clips.filter(c => c.end !== null && c.end <= tSec && c.type === 'home_point').length;
   const a = clips.filter(c => c.end !== null && c.end <= tSec && c.type === 'away_point').length;
   return { h, a };
+}
+
+function wcDrawWatermark(ctx, w, h, logoImg) {
+  if (!logoImg || !logoImg.naturalWidth) return;
+  const iconH   = Math.max(32, Math.round(h * 0.08));
+  const marginX = Math.round(w * 0.022);
+  const marginY = Math.round(h * 0.022);
+
+  ctx.save();
+  ctx.shadowColor   = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur    = Math.round(iconH * 0.3);
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.drawImage(logoImg, w - marginX - iconH, marginY, iconH, iconH);
+  ctx.shadowColor = 'transparent';
+  ctx.restore();
 }
 
 function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
