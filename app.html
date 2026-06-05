@@ -186,7 +186,7 @@
       display: flex; align-items: center; gap: 10px;
       min-width: 0;
     }
-    #ed-top-left { justify-self: start; position: relative; z-index: 99999; }
+    #ed-top-left { justify-self: start; position: relative; z-index: 200; }
     #ed-top-right { justify-self: end; justify-content: flex-end; }
 
     .gl-btn {
@@ -485,27 +485,6 @@
       padding: 3px 7px; border-radius: 5px; pointer-events: none;
     }
 
-    /* Scoreboard style selector */
-    .sb-style-wrap { position: relative; }
-    .sb-style-select {
-      width: 100%; padding: 7px 36px 7px 10px;
-      border: 1.5px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--surface); color: var(--text3);
-      font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700;
-      letter-spacing: 0.5px; text-transform: uppercase;
-      cursor: not-allowed; appearance: none; -webkit-appearance: none; opacity: 0.65;
-    }
-    .soon-tag {
-      position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
-      font-size: 9px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
-      background: var(--surface2); color: var(--text3);
-      padding: 2px 5px; border-radius: 4px; pointer-events: none;
-    }
-    .beta-tag {
-      font-size: 9px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
-      background: #7c3aed22; color: #a78bfa;
-      padding: 2px 5px; border-radius: 4px; pointer-events: none; flex-shrink: 0;
-    }
 
     .export-sections { display: flex; flex-direction: column; }
     @media (min-width: 600px) {
@@ -685,6 +664,11 @@
     }
     .opt-row-label { font-size: 13px; font-weight: 700; color: var(--text); flex: 1; }
     .opt-row-sub   { font-size: 12px; color: var(--text3); }
+    .beta-tag {
+      font-size: 9px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
+      background: #7c3aed22; color: #a78bfa;
+      padding: 2px 5px; border-radius: 4px; pointer-events: none; flex-shrink: 0;
+    }
 
     .eng-label {
       font-size: 10px; color: var(--text3); text-align: center; font-weight: 600;
@@ -919,6 +903,7 @@ let clipSeq = 0;         // unique ID counter
 let videoSrc = '';       // object URL
 let videoFile = null;    // File reference
 let videoLoaded = false;
+let retryExportAfterReopen = false;
 
 // ════════════════════════════════════════════════════
 //  DOM
@@ -976,6 +961,10 @@ fileInput.addEventListener('change', e => {
   videoLoaded = true;
   fileInput.value = '';
   toast('Video loaded ✓');
+  if (retryExportAfterReopen) {
+    retryExportAfterReopen = false;
+    doVideoExport();
+  }
 });
 
 $('video-area').addEventListener('click', () => {
@@ -1406,6 +1395,8 @@ let exportEngine          = 'webcodecs';
 let exportQuality         = 'medium';
 let exportHighlightsOnly  = false;
 let exportDisableScoreboard = false;
+let exportScoreboardStyle    = 'classic'; // 'classic' | 'box'
+let exportScoreboardPosition = { v: 'top', h: 'left' }; // v: top|bottom, h: left|center|right
 let exportCombined        = false;
 
 function selectEngine(e) {
@@ -1458,6 +1449,29 @@ function selectDisableScoreboard(on) {
   drawPreview();
 }
 
+function selectScoreboardStyle(style) {
+  exportScoreboardStyle = style;
+  ['classic', 'box'].forEach(s => {
+    const btn = $('sb-style-' + s);
+    if (btn) btn.classList.toggle('active', s === style);
+  });
+  const posWrap = $('sb-position-wrap');
+  if (posWrap) posWrap.style.display = style === 'box' ? '' : 'none';
+  drawPreview();
+}
+
+function selectScoreboardPosition(axis, value) {
+  exportScoreboardPosition[axis] = value;
+  const ids = axis === 'v'
+    ? { top: 'sb-pos-top', bottom: 'sb-pos-bottom' }
+    : { left: 'sb-pos-left', center: 'sb-pos-center', right: 'sb-pos-right' };
+  Object.entries(ids).forEach(([k, id]) => {
+    const btn = $(id);
+    if (btn) btn.classList.toggle('active', k === value);
+  });
+  drawPreview();
+}
+
 function selectCombined(on) {
   exportCombined = on;
   const hCb  = $('opt-highlights');
@@ -1507,7 +1521,7 @@ function drawPreview() {
     const awayLabel = $('inp-away').value || 'Away';
     const homeScore = clips.filter(c => c.type === 'home_point').length;
     const awayScore = clips.filter(c => c.type === 'away_point').length;
-    wcDrawScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore);
+    wcDrawActiveScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore);
   }
 }
 
@@ -1582,11 +1596,22 @@ function openExport() {
     <div class="section-head" onclick="toggleExportSection('settings')">Export Options<svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
     <div class="export-settings-col">
       <div class="eng-label">Scoreboard Style</div>
-      <div class="sb-style-wrap">
-        <select class="sb-style-select" disabled>
-          <option>Classic</option>
-        </select>
-        <span class="soon-tag">Soon</span>
+      <div class="engine-toggle">
+        <button class="eng-btn ${exportScoreboardStyle === 'classic' ? 'active' : ''}" id="sb-style-classic" onclick="selectScoreboardStyle('classic')">Classic</button>
+        <button class="eng-btn ${exportScoreboardStyle === 'box'    ? 'active' : ''}" id="sb-style-box"    onclick="selectScoreboardStyle('box')">box</button>
+      </div>
+    </div>
+
+    <div class="export-settings-col" id="sb-position-wrap" style="${exportScoreboardStyle !== 'box' ? 'display:none' : ''}">
+      <div class="eng-label">Position</div>
+      <div class="engine-toggle" style="margin-bottom:4px">
+        <button class="eng-btn ${exportScoreboardPosition.v === 'top'    ? 'active' : ''}" id="sb-pos-top"    onclick="selectScoreboardPosition('v','top')">Top</button>
+        <button class="eng-btn ${exportScoreboardPosition.v === 'bottom' ? 'active' : ''}" id="sb-pos-bottom" onclick="selectScoreboardPosition('v','bottom')">Bottom</button>
+      </div>
+      <div class="engine-toggle">
+        <button class="eng-btn ${exportScoreboardPosition.h === 'left'   ? 'active' : ''}" id="sb-pos-left"   onclick="selectScoreboardPosition('h','left')">Left</button>
+        <button class="eng-btn ${exportScoreboardPosition.h === 'center' ? 'active' : ''}" id="sb-pos-center" onclick="selectScoreboardPosition('h','center')">Center</button>
+        <button class="eng-btn ${exportScoreboardPosition.h === 'right'  ? 'active' : ''}" id="sb-pos-right"  onclick="selectScoreboardPosition('h','right')">Right</button>
       </div>
     </div>
 
@@ -1908,6 +1933,8 @@ async function doWebCodecsExport() {
   }
   if (!videoFile) { toast('No video loaded'); return; }
 
+  const scoreboardStyle    = exportScoreboardStyle;
+  const scoreboardPosition = { ...exportScoreboardPosition };
   const disableScoreboard = exportCombined ? false : exportDisableScoreboard;
   cancelExport = false;
 
@@ -2449,10 +2476,8 @@ async function doWebCodecsExport() {
             }
 
             if (showScoreboard) {
-              // wcScoreAt scans the global `clips` array to count home_point and
-              // away_point entries whose end time is ≤ ctsSec (original timeline).
               const { h, a } = wcScoreAt(ctsSec);
-              wcDrawScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a);
+              wcDrawActiveScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h);
             }
 
             // Wrap the canvas pixels in a VideoFrame for the encoder.
@@ -2834,6 +2859,7 @@ async function doWebCodecsExport() {
     if (lbl) { lbl.style.color = 'var(--danger)'; lbl.textContent = '⚠ ' + err.message; }
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => openExport(); }
+    if (isFileAccessError(err)) showReopenVideoButton();
   }
 }
 
@@ -2841,6 +2867,21 @@ function cancelExportFn() {
   cancelExport = true;
   openExport();
   toast('Export cancelled');
+}
+
+function isFileAccessError(err) {
+  return err.message.includes('no longer accessible') || err.message.includes('Failed to load video');
+}
+
+function showReopenVideoButton() {
+  const body = $('export-body');
+  if (!body) return;
+  const btn = document.createElement('button');
+  btn.className = 'btn-primary';
+  btn.style.cssText = 'margin-top:12px;width:100%';
+  btn.textContent = 'Open Video';
+  btn.onclick = () => { retryExportAfterReopen = true; triggerOpen(); };
+  body.appendChild(btn);
 }
 
 // ════════════════════════════════════════════════════
@@ -2856,7 +2897,9 @@ async function doMediaRecorderExport() {
     toast(exportHighlightsOnly ? 'No highlighted clips to export' : 'No complete clips to export');
     return;
   }
-  const disableScoreboard = exportDisableScoreboard;
+  const disableScoreboard  = exportDisableScoreboard;
+  const scoreboardStyle    = exportScoreboardStyle;
+  const scoreboardPosition = { ...exportScoreboardPosition };
   if (!('MediaRecorder' in window)) { toast('MediaRecorder not supported'); return; }
 
   cancelExport = false;
@@ -2996,7 +3039,7 @@ async function doMediaRecorderExport() {
           ctx.drawImage(vid, 0, 0, width, height);
           if (!disableScoreboard) {
             const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h);
           }
           maybeResume();
           vid.requestVideoFrameCallback(drawFrame);
@@ -3008,7 +3051,7 @@ async function doMediaRecorderExport() {
           ctx.drawImage(vid, 0, 0, width, height);
           if (!disableScoreboard) {
             const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h);
           }
           maybeResume();
           requestAnimationFrame(drawLoop);
@@ -3085,6 +3128,7 @@ async function doMediaRecorderExport() {
     if (lbl) { lbl.style.color = 'var(--danger)'; lbl.textContent = '⚠ ' + err.message; }
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => openExport(); }
+    if (isFileAccessError(err)) showReopenVideoButton();
   }
 }
 
@@ -3124,6 +3168,84 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
   ctx.fillStyle = '#ff8a80';
   ctx.textAlign = 'right';
   ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY);
+}
+
+function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vPos = 'top', hPos = 'left') {
+  const rowH    = Math.max(22, Math.round(h * 0.052));
+  const boxW    = Math.round(w * 0.24);
+  const boxH    = rowH * 2;
+  const margin  = Math.round(w * 0.022);
+  const bx = hPos === 'right'  ? w - margin - boxW
+           : hPos === 'center' ? Math.round((w - boxW) / 2)
+           :                     margin;
+  const by = vPos === 'bottom' ? Math.round(h - margin * 0.8 - boxH)
+           :                     Math.round(h * 0.03);
+  const accentW = Math.round(rowH * 0.22);
+  const pad     = Math.round(rowH * 0.28);
+  const fontSize = Math.round(rowH * 0.54);
+
+  // Shadow for legibility
+  ctx.shadowColor   = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur    = Math.round(rowH * 0.4);
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+
+  // Main background
+  ctx.fillStyle = 'rgba(10,10,10,0.88)';
+  ctx.fillRect(bx, by, boxW, boxH);
+
+  ctx.shadowBlur = 0;
+
+  // Home accent stripe (blue)
+  ctx.fillStyle = '#1A73E8';
+  ctx.fillRect(bx, by, accentW, rowH);
+
+  // Away accent stripe (red)
+  ctx.fillStyle = '#D32F2F';
+  ctx.fillRect(bx, by + rowH, accentW, rowH);
+
+  // Divider between rows
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(bx, by + rowH, boxW, 1);
+
+  ctx.font = `700 ${fontSize}px "Arial Narrow", Arial, sans-serif`;
+  ctx.textBaseline = 'middle';
+
+  const textX  = bx + accentW + pad;
+  const scoreX = bx + boxW - pad;
+
+  // Home team name
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.fillText(homeTeam.toUpperCase().slice(0, 10), textX, by + rowH / 2);
+
+  // Home score
+  ctx.fillStyle = '#7eb3ff';
+  ctx.textAlign = 'right';
+  ctx.fillText(homeScore, scoreX, by + rowH / 2);
+
+  // Away team name
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.fillText(awayTeam.toUpperCase().slice(0, 10), textX, by + rowH + rowH / 2);
+
+  // Away score
+  ctx.fillStyle = '#ff8a80';
+  ctx.textAlign = 'right';
+  ctx.fillText(awayScore, scoreX, by + rowH + rowH / 2);
+
+  ctx.shadowColor = 'transparent';
+}
+
+function wcDrawActiveScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, style, vPos, hPos) {
+  const s  = style ?? exportScoreboardStyle;
+  const vp = vPos  ?? exportScoreboardPosition.v;
+  const hp = hPos  ?? exportScoreboardPosition.h;
+  if (s === 'box') {
+    wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vp, hp);
+  } else {
+    wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore);
+  }
 }
 
 // Scan the file's top-level box headers (8 bytes each) to locate moov without
@@ -3292,7 +3414,7 @@ updateUndoRedo();
   // Invisible 44×44px zone — bottom-left corner, above all overlays.
   // Long-press 800ms to toggle the panel.
   const zone = document.createElement('div');
-  zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:99998;-webkit-touch-callout:none;user-select:none;touch-action:none;';
+  zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:199;-webkit-touch-callout:none;user-select:none;touch-action:none;';
   zone.addEventListener('contextmenu', e => e.preventDefault());
   document.body.appendChild(zone);
   let _zoneTimer = null, _zoneX = 0, _zoneY = 0;
