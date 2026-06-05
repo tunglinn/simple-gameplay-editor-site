@@ -2217,6 +2217,7 @@ async function doWebCodecsExport() {
     }
 
     let framesEncoded = 0;
+    let lastProgressUpdate = 0;
     // Tracks the total output duration placed so far so each new clip is appended
     // immediately after the previous one with no gap.
     let cumulativeDuration = 0;
@@ -2391,6 +2392,14 @@ async function doWebCodecsExport() {
           }
           vf.close(); // Release GPU/memory immediately; encoder has its own copy.
           framesEncoded++;
+          const _now = Date.now();
+          if (_now - lastProgressUpdate >= 50) {
+            lastProgressUpdate = _now;
+            const pct = 11 + Math.round((framesEncoded / totalFrames) * 80);
+            setProgress(pct,
+              `Encoding frame ${framesEncoded} / ${totalFrames}`,
+              `Clip ${ci + 1} / ${exportClips.length}`);
+          }
           // Encoder backpressure: on Android the hardware encoder (MediaCodec)
           // and decoder share the same resource pool. If we let the encoder queue
           // grow unbounded (~132 frames), the decoder cannot complete flush() and
@@ -2541,10 +2550,6 @@ async function doWebCodecsExport() {
         if ((si + 1) % 50 === 0) {
           await wcYield();
           console.log(`[WC] clip ${ci} sample ${si}: framesDecoded=${framesDecodedThisClip} framesEncoded=${framesEncoded} decoderState=${decoder.state} decodeQ=${decoder.decodeQueueSize} encodeQ=${encoder.encodeQueueSize}`);
-          const pct = 11 + Math.round((framesEncoded / totalFrames) * 80);
-          setProgress(pct,
-            `Encoding frame ${framesEncoded} / ${totalFrames}`,
-            `Clip ${ci + 1} / ${exportClips.length}`);
         }
       }
       console.log(`[WC] clip ${ci} decode loop done: samplesSent=${samplesSent}, decoderState=${decoder.state}`);
