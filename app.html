@@ -664,6 +664,11 @@
     }
     .opt-row-label { font-size: 13px; font-weight: 700; color: var(--text); flex: 1; }
     .opt-row-sub   { font-size: 12px; color: var(--text3); }
+    .beta-tag {
+      font-size: 9px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
+      background: #7c3aed22; color: #a78bfa;
+      padding: 2px 5px; border-radius: 4px; pointer-events: none; flex-shrink: 0;
+    }
 
     .eng-label {
       font-size: 10px; color: var(--text3); text-align: center; font-weight: 600;
@@ -1465,6 +1470,8 @@ function selectScoreboardPosition(axis, value) {
     if (btn) btn.classList.toggle('active', k === value);
   });
   drawPreview();
+}
+
 function selectCombined(on) {
   exportCombined = on;
   const hCb  = $('opt-highlights');
@@ -2469,10 +2476,8 @@ async function doWebCodecsExport() {
             }
 
             if (showScoreboard) {
-              // wcScoreAt scans the global `clips` array to count home_point and
-              // away_point entries whose end time is ≤ ctsSec (original timeline).
               const { h, a } = wcScoreAt(ctsSec);
-              wcDrawScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a);
+              wcDrawActiveScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h);
             }
 
             // Wrap the canvas pixels in a VideoFrame for the encoder.
@@ -2519,11 +2524,6 @@ async function doWebCodecsExport() {
           }
         };
 
-          if (!disableScoreboard) {
-            // wcScoreAt scans the global `clips` array to count home_point and
-            // away_point entries whose end time is ≤ ctsSec (original timeline).
-            const { h, a } = wcScoreAt(ctsSec);
-            wcDrawActiveScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h);
         // Converts VideoFrames to ImageBitmaps (closing the VideoFrame immediately to
         // free the decoder's output buffer), inserts each into reorderBuffer in CTS
         // order, and calls encodeFromReorderBuffer to encode from the front of the
