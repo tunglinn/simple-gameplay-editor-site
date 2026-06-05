@@ -186,7 +186,7 @@
       display: flex; align-items: center; gap: 10px;
       min-width: 0;
     }
-    #ed-top-left { justify-self: start; position: relative; z-index: 99999; }
+    #ed-top-left { justify-self: start; position: relative; z-index: 200; }
     #ed-top-right { justify-self: end; justify-content: flex-end; }
 
     .gl-btn {
@@ -3166,7 +3166,7 @@ updateUndoRedo();
   // Invisible 44×44px zone — bottom-left corner, above all overlays.
   // Long-press 800ms to toggle the panel.
   const zone = document.createElement('div');
-  zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:99998;-webkit-touch-callout:none;user-select:none;touch-action:none;';
+  zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:199;-webkit-touch-callout:none;user-select:none;touch-action:none;';
   zone.addEventListener('contextmenu', e => e.preventDefault());
   document.body.appendChild(zone);
   let _zoneTimer = null, _zoneX = 0, _zoneY = 0;
