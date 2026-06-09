@@ -154,7 +154,7 @@ function updatePlayIcon() {
 editorVideo.addEventListener('play',  updatePlayIcon);
 editorVideo.addEventListener('pause', updatePlayIcon);
 editorVideo.addEventListener('ended', updatePlayIcon);
-editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); refreshRecBar(); syncNavBtns(); });
+editorVideo.addEventListener('timeupdate', () => { updateScore(); syncProgress(); refreshRecBar(); syncNavBtns(); syncDpUpStyle(); });
 editorVideo.addEventListener('loadedmetadata', () => {
   vidProgress.max = editorVideo.duration || 100;
   syncProgress();
@@ -227,8 +227,11 @@ function nextMark() {
 }
 
 function syncDpUpStyle() {
-  const on = activeClip && activeClip.highlight;
-  dpUp.classList.toggle('star-on', on);
+  const cur = editorVideo.currentTime;
+  const hit = !activeClip && clips.find(c => c.end != null && POINT_TYPES.includes(c.type) && cur >= c.start && cur <= c.end);
+  dpUp.disabled = !activeClip && !hit;
+  const on = activeClip ? activeClip.highlight : (hit ? hit.highlight : false);
+  dpUp.classList.toggle('star-on', !!on);
 }
 
 // ════════════════════════════════════════════════════
@@ -281,7 +284,7 @@ function updateActionBtns() {
   $('btn-nopt').disabled = !on;
   $('btn-away').disabled = !on;
   $('btn-serve').disabled = on;
-  dpUp.disabled = !on;
+  syncDpUpStyle();
   syncNavBtns();
 }
 
