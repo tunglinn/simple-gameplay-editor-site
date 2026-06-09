@@ -103,6 +103,7 @@ mainVideo.addEventListener('pause', () => {
 // ════════════════════════════════════════════════════
 function openEditor() {
   if (!videoLoaded) { toast('Open a video first'); return; }
+  if (window._dbgZone) window._dbgZone.style.pointerEvents = 'none';
   editorView.classList.add('open');
   updateScore();
   updateActionBtns();
@@ -131,6 +132,7 @@ function openEditor() {
 function closeEditor() {
   editorVideo.pause();
   mainVideo.currentTime = editorVideo.currentTime;
+  if (window._dbgZone) window._dbgZone.style.pointerEvents = 'auto';
   editorView.classList.remove('open');
   updatePlayIcon();
 }
@@ -984,6 +986,7 @@ updateUndoRedo();
   zone.style.cssText = 'position:fixed;top:0;left:0;width:44px;height:44px;z-index:199;-webkit-touch-callout:none;user-select:none;touch-action:none;';
   zone.addEventListener('contextmenu', e => e.preventDefault());
   document.body.appendChild(zone);
+  window._dbgZone = zone;
   let _zoneTimer = null, _zoneX = 0, _zoneY = 0;
   zone.addEventListener('pointerdown', e => {
     _zoneX = e.clientX; _zoneY = e.clientY;
