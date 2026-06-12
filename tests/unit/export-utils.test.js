@@ -20,7 +20,7 @@ const {
   wcPickH264Codec,
   wcSerializeAvcC, wcSerializeHvcC,
   wcGetSamplesForClip,
-} = require('../../export-utils.js');
+} = require('../../app/export-utils.js');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // fmt — timestamp display (e.g. "1:23.4")

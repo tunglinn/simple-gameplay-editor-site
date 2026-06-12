@@ -1,9 +1,9 @@
 // GamePointLa Service Worker
-const CACHE = 'gamepointla-v1';
+const CACHE = 'gamepointla-v2';
 const ASSETS = [
   './',
   './index.html',
-  './app.html',
+  '/app',
   './manifest.webmanifest',
 ];
 
