@@ -771,16 +771,29 @@ async function doWebCodecsExport() {
         if (decoder.state !== 'closed') {
           let stallTimer, cancelPoll;
           try {
-            await Promise.race([
+            // Progress-based stall detection: reset the 20 s window every time a new
+          // frame is decoded. A fixed wall-clock timeout fires on long clips even when
+          // the decoder is making steady progress — MediaCodec output buffers fill up
+          // and are freed one-at-a-time by drainFrames, so flush() takes O(frames).
+          let lastDecodedCount = framesDecodedThisClip;
+          await Promise.race([
               decoder.flush(),
-              new Promise((_, rej) => { stallTimer = setTimeout(() =>
-                rej(new Error('Decoder stalled — try a different video file')), 20_000); }),
+              new Promise((_, rej) => {
+              stallTimer = setInterval(() => {
+                if (framesDecodedThisClip > lastDecodedCount) {
+                  lastDecodedCount = framesDecodedThisClip;
+                } else {
+                  clearInterval(stallTimer);
+                    rej(new Error('Decoder stalled — try a different video file'));
+                }
+              }, 20_000);
+            }),
               new Promise(res => { cancelPoll = setInterval(() => {
                 if (cancelExport) { clearInterval(cancelPoll); res(); }
               }, 50); }),
             ]);
           } finally {
-            clearTimeout(stallTimer);
+            clearInterval(stallTimer);
             clearInterval(cancelPoll);
           }
         }
