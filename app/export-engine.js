@@ -61,9 +61,9 @@ async function doWebCodecsExport() {
     // chunks and encoded audio chunks together, writing the MP4 file structure
     // (track headers, timing tables, codec metadata, etc.) around them.
     // mp4-muxer is a pure-JS library that does this entirely in the browser.
-    let Muxer, ArrayBufferTarget;
+    let Muxer, StreamTarget, ArrayBufferTarget;
     try {
-      ({ Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm'));
+      ({ Muxer, StreamTarget, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm'));
     } catch {
       throw new Error('Could not load mp4-muxer. Check your internet connection.');
     }
@@ -239,16 +239,22 @@ async function doWebCodecsExport() {
     const ctx = canvas.getContext('2d');
     console.log('[WC] OffscreenCanvas ctx:', ctx ? 'ok' : '⚠ NULL — all canvas ops will silently no-op');
 
-    // Configure the muxer with our output tracks and memory target.
-    // ArrayBufferTarget: accumulates all muxed bytes into a RAM buffer.
-    //   Call muxer.target.buffer after finalize() to get the complete MP4 bytes.
-    // fastStart 'in-memory': moves the MP4 metadata (moov box) to the start of
-    //   the file so media players can begin playback immediately without seeking
-    //   to the end first. The in-memory variant buffers everything then reorders.
+    // On Android, V8's JS heap is capped at ~512 MB. ArrayBufferTarget accumulates
+    // the entire output as one contiguous ArrayBuffer, which crashes the tab on
+    // large exports. StreamTarget instead calls onData with small sequential chunks
+    // as they are produced; fastStart:false keeps all writes sequential (no
+    // seek-backs), so ignoring the position argument is safe. Android players
+    // handle moov-at-end fine. We can consider to use 'in-memory' for desktop
+    // (moov at front, WMP compatible).
+    //
     // firstTimestampBehavior 'offset': subtracts the first frame's timestamp from
-    //   all subsequent timestamps, ensuring the output video always starts at t=0.
+    // all subsequent timestamps, ensuring the output video always starts at t=0.
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const outputChunks = [];
     const muxer = new Muxer({
-      target: new ArrayBufferTarget(),
+      target: isAndroid
+        ? new StreamTarget({ onData: (data, _position) => outputChunks.push(data.slice()) })
+        : new ArrayBufferTarget(),
       // 'avc' = H.264/AVC (Advanced Video Coding) — the most widely supported
       // video codec. Each compressed frame is a fragment of H.264 bitstream.
       video: { codec: 'avc', width: outW, height: outH },
@@ -258,7 +264,7 @@ async function doWebCodecsExport() {
         sampleRate: audioTrack.audio.sample_rate,
         numberOfChannels: audioTrack.audio.channel_count,
       }} : {}),
-      fastStart: 'in-memory',
+      fastStart: false,
       firstTimestampBehavior: 'offset',
     });
 
@@ -935,9 +941,10 @@ async function doWebCodecsExport() {
     await wcYield();
     muxer.finalize();
 
-    const outBuffer = muxer.target.buffer;
-    console.log(`[WC] muxer buffer byteLength: ${outBuffer.byteLength} (${(outBuffer.byteLength / 1024).toFixed(1)} KB)`);
-    const blob = new Blob([outBuffer], { type: 'video/mp4' });
+    const blob = isAndroid
+      ? new Blob(outputChunks, { type: 'video/mp4' })
+      : new Blob([muxer.target.buffer], { type: 'video/mp4' });
+    console.log(`[WC] blob size: ${blob.size} bytes (${(blob.size / 1024).toFixed(1)} KB)${isAndroid ? `, chunks: ${outputChunks.length}` : ''}`);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -955,7 +962,7 @@ async function doWebCodecsExport() {
     const totalClipCount = exportCombined
       ? highlightClips.length + exportClips.length
       : exportClips.length;
-    setProgress(100, `✓ Exported — ${wcFmtSize(outBuffer.byteLength)}`,
+    setProgress(100, `✓ Exported — ${wcFmtSize(blob.size)}`,
       `${framesEncoded} frames · ${totalClipCount} clip${totalClipCount !== 1 ? 's' : ''}`);
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Done'; cancelBtn.onclick = () => openExport(); }
