@@ -208,8 +208,8 @@ async function doWebCodecsExport() {
     // large exports. StreamTarget instead calls onData with small sequential chunks
     // as they are produced; fastStart:false keeps all writes sequential (no
     // seek-backs), so ignoring the position argument is safe. Android players
-    // handle moov-at-end fine. On desktop there is no memory pressure, so we keep
-    // ArrayBufferTarget + fastStart:'in-memory' (moov at front, WMP compatible).
+    // handle moov-at-end fine. We can consider to use 'in-memory' for desktop
+    // (moov at front, WMP compatible).
     //
     // firstTimestampBehavior 'offset': subtracts the first frame's timestamp from
     // all subsequent timestamps, ensuring the output video always starts at t=0.
