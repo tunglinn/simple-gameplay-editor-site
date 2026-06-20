@@ -507,6 +507,9 @@ let exportQuality         = 'medium';
 let exportHighlightsOnly  = false;
 let exportDisableScoreboard = false;
 let exportDisableWatermark  = false;
+let exportScoreboardStyle    = 'classic'; // 'classic' | 'box'
+let exportScoreboardPosition = { v: 'top', h: 'left' };
+let exportCombined        = false;
 
 const _watermarkImg = new Image();
 _watermarkImg.src = 'img/icon.png';
@@ -519,6 +522,13 @@ function selectEngine(e) {
 }
 
 function calcExportDur() {
+  if (exportCombined) {
+    const hlDur = clips.filter(c => c.end !== null && c.end > c.start && c.highlight)
+      .reduce((s, c) => s + (c.end - c.start), 0);
+    const allDur = clips.filter(c => c.end !== null && c.end > c.start)
+      .reduce((s, c) => s + (c.end - c.start), 0);
+    return hlDur + allDur;
+  }
   return clips
     .filter(c => c.end !== null && c.end > c.start && (!exportHighlightsOnly || c.highlight))
     .reduce((sum, c) => sum + (c.end - c.start), 0);
@@ -559,6 +569,43 @@ function selectDisableWatermark(on) {
   drawPreview();
 }
 
+function selectScoreboardStyle(style) {
+  exportScoreboardStyle = style;
+  ['classic', 'box'].forEach(s => {
+    const btn = $('sb-style-' + s);
+    if (btn) btn.classList.toggle('active', s === style);
+  });
+  const posWrap = $('sb-position-wrap');
+  if (posWrap) posWrap.style.display = style === 'box' ? '' : 'none';
+  drawPreview();
+}
+
+function selectScoreboardPosition(axis, value) {
+  exportScoreboardPosition[axis] = value;
+  const ids = axis === 'v'
+    ? { top: 'sb-pos-top', bottom: 'sb-pos-bottom' }
+    : { left: 'sb-pos-left', center: 'sb-pos-center', right: 'sb-pos-right' };
+  Object.entries(ids).forEach(([k, id]) => {
+    const btn = $(id);
+    if (btn) btn.classList.toggle('active', k === value);
+  });
+  drawPreview();
+}
+
+function selectCombined(on) {
+  exportCombined = on;
+  const hCb  = $('opt-highlights');
+  const sbCb = $('opt-no-scoreboard');
+  if (hCb)  hCb.disabled  = on;
+  if (sbCb) sbCb.disabled = on;
+  const row1 = hCb  && hCb.closest('.opt-row');
+  const row2 = sbCb && sbCb.closest('.opt-row');
+  if (row1) row1.style.opacity = on ? '0.4' : '';
+  if (row2) row2.style.opacity = on ? '0.4' : '';
+  const durEl = $('meta-export-dur');
+  if (durEl) { const d = calcExportDur(); durEl.textContent = d > 0 ? fmtDur(d) : '—'; }
+}
+
 function drawPreview() {
   const canvas = $('preview-canvas');
   if (!canvas) return;
@@ -594,7 +641,7 @@ function drawPreview() {
     const awayLabel = $('inp-away').value || 'Away';
     const homeScore = clips.filter(c => c.type === 'home_point').length;
     const awayScore = clips.filter(c => c.type === 'away_point').length;
-    wcDrawScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore);
+    wcDrawActiveScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore);
   }
   if (!exportDisableWatermark) {
     wcDrawWatermark(ctx, cW, cH, _watermarkImg.complete && _watermarkImg.naturalWidth ? _watermarkImg : null);
@@ -616,8 +663,8 @@ function getExportBitrate(w, h, fps) {
 }
 
 function doVideoExport() {
-  if (exportEngine === 'recorder') doMediaRecorderExport();
-  else doWebCodecsExport();
+  if (exportCombined || exportEngine !== 'recorder') doWebCodecsExport();
+  else doMediaRecorderExport();
 }
 
 function openExport() {
@@ -671,11 +718,22 @@ function openExport() {
     <div class="section-head" onclick="toggleExportSection('settings')">Export Options<svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></div>
     <div class="export-settings-col">
       <div class="eng-label">Scoreboard Style</div>
-      <div class="sb-style-wrap">
-        <select class="sb-style-select" disabled>
-          <option>Classic</option>
-        </select>
-        <span class="soon-tag">Soon</span>
+      <div class="engine-toggle">
+        <button class="eng-btn ${exportScoreboardStyle === 'classic' ? 'active' : ''}" id="sb-style-classic" onclick="selectScoreboardStyle('classic')">Classic</button>
+        <button class="eng-btn ${exportScoreboardStyle === 'box'    ? 'active' : ''}" id="sb-style-box"    onclick="selectScoreboardStyle('box')">Box</button>
+      </div>
+    </div>
+
+    <div class="export-settings-col" id="sb-position-wrap" style="${exportScoreboardStyle !== 'box' ? 'display:none' : ''}">
+      <div class="eng-label">Position</div>
+      <div class="engine-toggle" style="margin-bottom:4px">
+        <button class="eng-btn ${exportScoreboardPosition.v === 'top'    ? 'active' : ''}" id="sb-pos-top"    onclick="selectScoreboardPosition('v','top')">Top</button>
+        <button class="eng-btn ${exportScoreboardPosition.v === 'bottom' ? 'active' : ''}" id="sb-pos-bottom" onclick="selectScoreboardPosition('v','bottom')">Bottom</button>
+      </div>
+      <div class="engine-toggle">
+        <button class="eng-btn ${exportScoreboardPosition.h === 'left'   ? 'active' : ''}" id="sb-pos-left"   onclick="selectScoreboardPosition('h','left')">Left</button>
+        <button class="eng-btn ${exportScoreboardPosition.h === 'center' ? 'active' : ''}" id="sb-pos-center" onclick="selectScoreboardPosition('h','center')">Center</button>
+        <button class="eng-btn ${exportScoreboardPosition.h === 'right'  ? 'active' : ''}" id="sb-pos-right"  onclick="selectScoreboardPosition('h','right')">Right</button>
       </div>
     </div>
 
@@ -697,14 +755,14 @@ function openExport() {
       </div>
     </div>
 
-    <label class="opt-row" onclick="selectHighlightsOnly(!$('opt-highlights').checked)">
-      <input type="checkbox" id="opt-highlights" ${exportHighlightsOnly ? 'checked' : ''}
+    <label class="opt-row" onclick="selectHighlightsOnly(!$('opt-highlights').checked)" style="${exportCombined ? 'opacity:0.4' : ''}">
+      <input type="checkbox" id="opt-highlights" ${exportHighlightsOnly ? 'checked' : ''} ${exportCombined ? 'disabled' : ''}
              onchange="selectHighlightsOnly(this.checked)" onclick="event.stopPropagation()">
       <span class="opt-row-label">Highlights only</span>
       <span class="opt-row-sub" id="opt-highlights-sub" style="${exportHighlightsOnly ? '' : 'display:none'}">${highlights} clip${highlights !== 1 ? 's' : ''}</span>
     </label>
-    <label class="opt-row" onclick="selectDisableScoreboard(!$('opt-no-scoreboard').checked)">
-      <input type="checkbox" id="opt-no-scoreboard" ${exportDisableScoreboard ? 'checked' : ''}
+    <label class="opt-row" onclick="selectDisableScoreboard(!$('opt-no-scoreboard').checked)" style="${exportCombined ? 'opacity:0.4' : ''}">
+      <input type="checkbox" id="opt-no-scoreboard" ${exportDisableScoreboard ? 'checked' : ''} ${exportCombined ? 'disabled' : ''}
              onchange="selectDisableScoreboard(this.checked)" onclick="event.stopPropagation()">
       <span class="opt-row-label">No scoreboard overlay</span>
     </label>
@@ -712,6 +770,12 @@ function openExport() {
       <input type="checkbox" id="opt-no-watermark" ${exportDisableWatermark ? 'checked' : ''}
              onchange="selectDisableWatermark(this.checked)" onclick="event.stopPropagation()">
       <span class="opt-row-label">No watermark</span>
+    </label>
+    <label class="opt-row" onclick="selectCombined(!$('opt-combined').checked)">
+      <input type="checkbox" id="opt-combined" ${exportCombined ? 'checked' : ''}
+             onchange="selectCombined(this.checked)" onclick="event.stopPropagation()">
+      <span class="opt-row-label">Combined export</span>
+      <span class="beta-tag">Beta</span>
     </label>
 
     <div class="export-dur-note"><span id="meta-export-dur">${exportDur > 0 ? fmtDur(exportDur) : '—'}</span> to export</div>
