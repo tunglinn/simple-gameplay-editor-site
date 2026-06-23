@@ -40,6 +40,7 @@ async function doWebCodecsExport() {
       <div class="exp-status" id="exp-status">Initializing…</div>
       <div class="exp-bar-wrap"><div class="exp-bar" id="exp-bar"></div></div>
       <div class="exp-meta-txt" id="exp-meta"></div>
+      <div class="exp-debug-txt" id="exp-debug"></div>
       <button class="exp-cancel" id="exp-cancel-btn" onclick="cancelExportFn()">Cancel</button>
     </div>
   </div>`;
@@ -239,20 +240,22 @@ async function doWebCodecsExport() {
     const ctx = canvas.getContext('2d');
     console.log('[WC] OffscreenCanvas ctx:', ctx ? 'ok' : '⚠ NULL — all canvas ops will silently no-op');
 
-    // On Android, V8's JS heap is capped at ~512 MB. ArrayBufferTarget accumulates
+    // On mobile (Android/iOS), the JS heap is capped well below desktop limits. ArrayBufferTarget accumulates
     // the entire output as one contiguous ArrayBuffer, which crashes the tab on
     // large exports. StreamTarget instead calls onData with small sequential chunks
-    // as they are produced; fastStart:false keeps all writes sequential (no
-    // seek-backs), so ignoring the position argument is safe. Android players
-    // handle moov-at-end fine. We can consider to use 'in-memory' for desktop
-    // (moov at front, WMP compatible).
+    // as they are produced. fastStart:'fragmented' writes ftyp+moov first then
+    // moof+mdat pairs — inherently sequential (no seek-backs needed), so ignoring
+    // the position argument is safe, and Android's MediaExtractor can parse it.
+    // Desktop uses 'in-memory' (moov at front, WMP compatible).
     //
     // firstTimestampBehavior 'offset': subtracts the first frame's timestamp from
     // all subsequent timestamps, ensuring the output video always starts at t=0.
-    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const dbg = $('exp-debug');
+    if (dbg) dbg.textContent = `fastStart: ${isMobile ? 'fragmented' : 'in-memory'}`;
     const outputChunks = [];
     const muxer = new Muxer({
-      target: isAndroid
+      target: isMobile
         ? new StreamTarget({ onData: (data, _position) => outputChunks.push(data.slice()) })
         : new ArrayBufferTarget(),
       // 'avc' = H.264/AVC (Advanced Video Coding) — the most widely supported
@@ -264,7 +267,7 @@ async function doWebCodecsExport() {
         sampleRate: audioTrack.audio.sample_rate,
         numberOfChannels: audioTrack.audio.channel_count,
       }} : {}),
-      fastStart: false,
+      fastStart: isMobile ? 'fragmented' : 'in-memory',
       firstTimestampBehavior: 'offset',
     });
 
@@ -941,10 +944,10 @@ async function doWebCodecsExport() {
     await wcYield();
     muxer.finalize();
 
-    const blob = isAndroid
+    const blob = isMobile
       ? new Blob(outputChunks, { type: 'video/mp4' })
       : new Blob([muxer.target.buffer], { type: 'video/mp4' });
-    console.log(`[WC] blob size: ${blob.size} bytes (${(blob.size / 1024).toFixed(1)} KB)${isAndroid ? `, chunks: ${outputChunks.length}` : ''}`);
+    console.log(`[WC] blob size: ${blob.size} bytes (${(blob.size / 1024).toFixed(1)} KB)${isMobile ? `, chunks: ${outputChunks.length}` : ''}`);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
