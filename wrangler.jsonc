@@ -2,32 +2,14 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "simple-gameplay-editor-site",
   "compatibility_date": "2026-04-28",
-  "observability": {
-    "enabled": true
-  },
-  "assets": {
-    "directory": "."
-  },
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  "main": "worker/index.js",
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "gamepointla-analytics",
       "database_id": "58a75a37-2d65-4b5e-a2b2-78f3aabae109"
     }
-  ],
-  "env": {
-    "beta": {
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "gamepointla-analytics-beta",
-          "database_id": "db3db4e5-5e0b-4125-ba2b-f1a6aa64688b"
-        }
-      ]
-    }
-  }
+  ]
 }
