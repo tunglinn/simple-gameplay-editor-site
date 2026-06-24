@@ -763,7 +763,7 @@ async function doWebCodecsExport() {
             const pct = progressBase + Math.round(((framesEncoded - framesAtGroupStart) / groupTotalFrames) * progressRange);
             setProgress(pct,
               `Encoding frame ${framesEncoded - framesAtGroupStart} / ${groupTotalFrames}`,
-              `${passLabel} clip ${ci + 1} / ${groupGroups.length}`);
+              `${passLabel} ${ci + 1} / ${groupGroups.length}`);
           }
         }
         console.log(`[WC] ${passLabel} clip ${ci} decode loop done: samplesSent=${samplesSent}, decoderState=${decoder.state}`);
