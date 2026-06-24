@@ -12,25 +12,28 @@ async function doWebCodecsExport() {
     trackEvent('browser_unsupported', { message: 'WebCodecs not supported' });
     return;
   }
-  // Only export clips that are fully bounded (have both a start AND end time).
-  // When "highlights only" is on, further restrict to clips the user starred.
-  // Sort chronologically so clips are concatenated in playback order.
-  const exportClips = clips
-    .filter(c => c.end !== null && (!exportHighlightsOnly || c.highlight))
-    .sort((a, b) => a.start - b.start);
-  if (!exportClips.length) {
+  // Combined export uses two passes: highlighted clips with no scoreboard, then
+  // all clips with scoreboard. Normal export uses the existing option flags.
+  const highlightClips = exportCombined
+    ? clips.filter(c => c.end !== null && c.highlight).sort((a, b) => a.start - b.start)
+    : null;
+  const exportClips = exportCombined
+    ? clips.filter(c => c.end !== null).sort((a, b) => a.start - b.start)
+    : clips.filter(c => c.end !== null && (!exportHighlightsOnly || c.highlight))
+           .sort((a, b) => a.start - b.start);
+
+  if (exportCombined) {
+    if (!highlightClips.length) { toast('No highlighted clips to export'); return; }
+    if (!exportClips.length)    { toast('No complete clips to export'); return; }
+  } else if (!exportClips.length) {
     toast(exportHighlightsOnly ? 'No highlighted clips to export' : 'No complete clips to export');
     return;
   }
   if (!videoFile) { toast('No video loaded'); return; }
 
-  const disableScoreboard = exportDisableScoreboard;
-  const disableWatermark  = exportDisableWatermark;
-  // Ensure the watermark image is ready before encoding starts.
-  if (!disableWatermark && !_watermarkImg.complete) {
-    await new Promise(r => { _watermarkImg.onload = r; _watermarkImg.onerror = r; });
-  }
-  const watermarkLogo = (!disableWatermark && _watermarkImg.naturalWidth) ? _watermarkImg : null;
+  const scoreboardStyle    = exportScoreboardStyle;
+  const scoreboardPosition = { ...exportScoreboardPosition };
+  const disableScoreboard = exportCombined ? false : exportDisableScoreboard;
   cancelExport = false;
 
   $('export-body').innerHTML = `<div class="export-body">
@@ -59,9 +62,9 @@ async function doWebCodecsExport() {
     // chunks and encoded audio chunks together, writing the MP4 file structure
     // (track headers, timing tables, codec metadata, etc.) around them.
     // mp4-muxer is a pure-JS library that does this entirely in the browser.
-    let Muxer, ArrayBufferTarget;
+    let Muxer, StreamTarget, ArrayBufferTarget;
     try {
-      ({ Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm'));
+      ({ Muxer, StreamTarget, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm'));
     } catch {
       throw new Error('Could not load mp4-muxer. Check your internet connection.');
     }
@@ -129,7 +132,10 @@ async function doWebCodecsExport() {
     const outH = (trackRotation === 90 || trackRotation === 270) ? width : height;
     console.log(`[WC] track rotation: ${trackRotation}° — encoded: ${width}×${height} → output: ${outW}×${outH}`);
 
-    setProgress(11, 'Preparing…', `${outW}×${outH} · ${fps} fps · ${exportClips.length} clip${exportClips.length !== 1 ? 's' : ''}`);
+    const clipCountLabel = exportCombined
+      ? `${highlightClips.length}+${exportClips.length}`
+      : String(exportClips.length);
+    setProgress(11, 'Preparing…', `${outW}×${outH} · ${fps} fps · ${clipCountLabel} clips`);
     await wcYield();
 
     // For each clip, collect the set of compressed video samples that cover it.
@@ -139,10 +145,14 @@ async function doWebCodecsExport() {
     // the ones we actually want. wcGetSamplesForClip finds the last keyframe
     // before clip.start and starts there, giving the decoder its necessary context.
     const clipGroups = exportClips.map(c => wcGetSamplesForClip(videoSamples, c, timescale));
+    const hlGroups   = exportCombined
+      ? highlightClips.map(c => wcGetSamplesForClip(videoSamples, c, timescale))
+      : null;
     // frameSamples = samples within the clip's display window (used for progress only).
     // ⚠ WARNING: frameSamples has no upper-bound check in wcGetSamplesForClip,
     // so totalFrames is slightly overestimated — the progress bar won't reach 91%.
-    const totalFrames = clipGroups.reduce((n, g) => n + g.frameSamples.length, 0);
+    const totalFrames = clipGroups.reduce((n, g) => n + g.frameSamples.length, 0)
+      + (hlGroups ? hlGroups.reduce((n, g) => n + g.frameSamples.length, 0) : 0);
     if (!totalFrames) throw new Error('No frames found in the selected clip ranges');
 
     // Pre-fetch compressed video bytes for every clip RIGHT NOW, before any long
@@ -197,6 +207,32 @@ async function doWebCodecsExport() {
     }
     if (cancelExport) return;
 
+    // For combined export, also pre-fetch video data for the highlight clips (pass 1).
+    // Audio is already captured in audioDataMap above since highlights ⊂ allClips.
+    const hlDataMaps = [];
+    if (exportCombined) {
+      for (let ci = 0; ci < hlGroups.length; ci++) {
+        if (cancelExport) break;
+        const { allSamples } = hlGroups[ci];
+        const clipDataMap = new Map();
+        if (allSamples.length > 0) {
+          let minOff = allSamples[0].offset, maxEnd = allSamples[0].offset + allSamples[0].size;
+          for (const s of allSamples) {
+            if (s.offset < minOff) minOff = s.offset;
+            if (s.offset + s.size > maxEnd) maxEnd = s.offset + s.size;
+          }
+          console.log(`[WC] hl clip ${ci} pre-fetch: ${((maxEnd-minOff)/1048576).toFixed(0)} MB range, video=${allSamples.length}`);
+          const rangeBuffer = await videoFile.slice(minOff, maxEnd).arrayBuffer();
+          for (const s of allSamples) {
+            if (!clipDataMap.has(s.offset))
+              clipDataMap.set(s.offset, new Uint8Array(rangeBuffer, s.offset - minOff, s.size));
+          }
+        }
+        hlDataMaps.push(clipDataMap);
+      }
+      if (cancelExport) return;
+    }
+
     // OffscreenCanvas: a canvas element that lives only in memory, not on the page.
     // We use it to composite each decoded video frame with the scoreboard overlay
     // before passing the combined image to the encoder.
@@ -204,16 +240,22 @@ async function doWebCodecsExport() {
     const ctx = canvas.getContext('2d');
     console.log('[WC] OffscreenCanvas ctx:', ctx ? 'ok' : '⚠ NULL — all canvas ops will silently no-op');
 
-    // Configure the muxer with our output tracks and memory target.
-    // ArrayBufferTarget: accumulates all muxed bytes into a RAM buffer.
-    //   Call muxer.target.buffer after finalize() to get the complete MP4 bytes.
-    // fastStart 'in-memory': moves the MP4 metadata (moov box) to the start of
-    //   the file so media players can begin playback immediately without seeking
-    //   to the end first. The in-memory variant buffers everything then reorders.
+    // On Android, V8's JS heap is capped at ~512 MB. ArrayBufferTarget accumulates
+    // the entire output as one contiguous ArrayBuffer, which crashes the tab on
+    // large exports. StreamTarget instead calls onData with small sequential chunks
+    // as they are produced; fastStart:false keeps all writes sequential (no
+    // seek-backs), so ignoring the position argument is safe. Android players
+    // handle moov-at-end fine. We can consider to use 'in-memory' for desktop
+    // (moov at front, WMP compatible).
+    //
     // firstTimestampBehavior 'offset': subtracts the first frame's timestamp from
-    //   all subsequent timestamps, ensuring the output video always starts at t=0.
+    // all subsequent timestamps, ensuring the output video always starts at t=0.
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const outputChunks = [];
     const muxer = new Muxer({
-      target: new ArrayBufferTarget(),
+      target: isAndroid
+        ? new StreamTarget({ onData: (data, _position) => outputChunks.push(data.slice()) })
+        : new ArrayBufferTarget(),
       // 'avc' = H.264/AVC (Advanced Video Coding) — the most widely supported
       // video codec. Each compressed frame is a fragment of H.264 bitstream.
       video: { codec: 'avc', width: outW, height: outH },
@@ -223,40 +265,50 @@ async function doWebCodecsExport() {
         sampleRate: audioTrack.audio.sample_rate,
         numberOfChannels: audioTrack.audio.channel_count,
       }} : {}),
-      fastStart: 'in-memory',
+      fastStart: false,
       firstTimestampBehavior: 'offset',
     });
 
+    // State shared across both encode passes (combined) or the single pass (normal).
     let encErr = null;
     let encErrClip = -1;
     let chunksFromEncoder = 0;
+    let lastMuxTs     = -1; // last chunk.timestamp seen by the encoder output callback
+
     // VideoEncoder compresses raw image frames (VideoFrame objects) into
     // H.264 bitstream chunks. Each output chunk is handed to the muxer immediately.
-    const encoder = new VideoEncoder({
-      output: (chunk, meta) => {
-        if (!cancelExport) {
-          if (lastMuxTs !== -1 && chunk.timestamp < lastMuxTs) {
-            console.warn(`[WC] muxer chunk non-monotonic: prev=${lastMuxTs} cur=${chunk.timestamp} type=${chunk.type}`);
+    // For combined export the encoder is recreated between passes (same config, new
+    // instance) to force an IDR (keyframe) at the start of the second pass, ensuring
+    // the full-match section is independently seekable in the output file.
+    let encoder;
+    const makeEncoder = () => {
+      encoder = new VideoEncoder({
+        output: (chunk, meta) => {
+          if (!cancelExport) {
+            if (lastMuxTs !== -1 && chunk.timestamp < lastMuxTs) {
+              console.warn(`[WC] muxer chunk non-monotonic: prev=${lastMuxTs} cur=${chunk.timestamp} type=${chunk.type}`);
+            }
+            lastMuxTs = chunk.timestamp;
+            chunksFromEncoder++;
+            const chunkData = new Uint8Array(chunk.byteLength);
+            chunk.copyTo(chunkData);
+            if (chunksFromEncoder === 1) {
+              console.log(`[WC] encoder output callback fired for first time — type=${chunk.type} ts=${chunk.timestamp} byteLength=${chunk.byteLength} copied=${chunkData[0]},${chunkData[1]},${chunkData[2]},${chunkData[3]}`);
+              console.log(`[WC] first chunk meta — decoderConfig present: ${!!(meta && meta.decoderConfig)}, description byteLength: ${meta?.decoderConfig?.description?.byteLength ?? 'none'}`);
+            } else if (chunksFromEncoder % 20 === 0) {
+              console.log(`[WC] encoder output chunks so far: ${chunksFromEncoder}`);
+            }
+            const chunkDuration = chunk.duration ?? Math.round(1_000_000 / fps);
+            muxer.addVideoChunkRaw(chunkData, chunk.type, chunk.timestamp, chunkDuration, meta);
           }
-          lastMuxTs = chunk.timestamp;
-          chunksFromEncoder++;
-          const chunkData = new Uint8Array(chunk.byteLength);
-          chunk.copyTo(chunkData);
-          if (chunksFromEncoder === 1) {
-            console.log(`[WC] encoder output callback fired for first time — type=${chunk.type} ts=${chunk.timestamp} byteLength=${chunk.byteLength} copied=${chunkData[0]},${chunkData[1]},${chunkData[2]},${chunkData[3]}`);
-            console.log(`[WC] first chunk meta — decoderConfig present: ${!!(meta && meta.decoderConfig)}, description byteLength: ${meta?.decoderConfig?.description?.byteLength ?? 'none'}`);
-          } else if (chunksFromEncoder % 20 === 0) {
-            console.log(`[WC] encoder output chunks so far: ${chunksFromEncoder}`);
-          }
-          const chunkDuration = chunk.duration ?? Math.round(1_000_000 / fps);
-          muxer.addVideoChunkRaw(chunkData, chunk.type, chunk.timestamp, chunkDuration, meta);
-        }
-      },
-      error: e => {
-        encErr = e;
-        console.error('[WC] ENCODER ERROR at clip', encErrClip, '—', e.name, e.message, e);
-      },
-    });
+        },
+        error: e => {
+          encErr = e;
+          console.error('[WC] ENCODER ERROR at clip', encErrClip, '—', e.name, e.message, e);
+        },
+      });
+      encoder.configure(encoderConfig);
+    };
     // wcPickH264Codec (defined below) selects the minimum H.264 level that can
     // handle this video's resolution and frame rate. H.264 levels cap the maximum
     // macroblocks-per-second (MBs/sec) a decoder or encoder must handle, where each
@@ -292,7 +344,7 @@ async function doWebCodecsExport() {
     } catch (e) {
       console.warn('[WC] encoder isConfigSupported() threw:', e.message);
     }
-    encoder.configure(encoderConfig);
+    makeEncoder();
 
     // Why we must decode then re-encode even though the source is already H.264:
     // We need to draw the scoreboard overlay onto every frame. There is no way to
@@ -375,7 +427,6 @@ async function doWebCodecsExport() {
     }
 
     let framesEncoded = 0;
-    let lastProgressUpdate = 0;
     // Tracks the total output duration placed so far so each new clip is appended
     // immediately after the previous one with no gap.
     let cumulativeDuration = 0;
@@ -386,415 +437,439 @@ async function doWebCodecsExport() {
     // a CTS earlier than the P-frame decoded second. We clamp outTs to always
     // be at least lastEncodedTs + 1 to keep DTS monotonically increasing.
     let lastEncodedTs = -1;
-    let lastMuxTs     = -1; // last chunk.timestamp seen by the encoder output callback
 
-    for (let ci = 0; ci < clipGroups.length; ci++) {
-      if (cancelExport) break;
-      encErrClip = ci;
-      const { clip, allSamples, frameSamples } = clipGroups[ci];
-      console.log(`[WC] clip ${ci}: ${clip.start.toFixed(3)}–${clip.end.toFixed(3)}s | allSamples=${allSamples.length}, frameSamples=${frameSamples.length}`);
-      if (allSamples.length === 0) {
-        console.warn(`[WC] clip ${ci} ⚠ allSamples is empty — clip window outside video timeline, or videoSamples was empty`);
-      } else {
-        const s0 = allSamples[0], ts0 = s0.timescale || timescale;
-        console.log(`[WC] clip ${ci} preroll: is_sync=${s0.is_sync}, dts=${(s0.dts/ts0).toFixed(3)}s, offset=${s0.offset}, size=${s0.size}`);
-      }
+    // Encode all clips in groupGroups into the shared muxer/encoder.
+    // groupDataMaps: pre-fetched video bytes, indexed parallel to groupGroups.
+    // showScoreboard: whether to draw the score overlay on each frame.
+    // progressBase / progressRange: this group's slice of the 0–100 progress bar.
+    // passLabel: prefix shown in progress meta text, e.g. "Highlights" or "Match".
+    // Mutates outer: framesEncoded, cumulativeDuration, lastEncodedTs, encErr, encErrClip.
+    const encodeGroup = async (groupGroups, groupDataMaps, showScoreboard, progressBase, progressRange, passLabel) => {
+      const groupTotalFrames = groupGroups.reduce((n, g) => n + g.frameSamples.length, 0);
+      const framesAtGroupStart = framesEncoded;
 
-      const clipDataMap = allClipDataMaps[ci];
-
-      // DTS (Decode Time Stamp): the order in which the decoder must process frames.
-      // CTS (Composition Time Stamp): the order in which frames should be displayed.
-      // These differ when the video uses B-frames (Bidirectional frames).
-      //
-      // B-frames compress a frame by storing only its difference from BOTH a past
-      // and a future frame. This means frame display order ≠ decode order.
-      // Example stream (I=keyframe, P=predicted from past, B=bidirectional):
-      //   Display order:  I  B  B  P  B  B  P
-      //   Decode order:   I  P  B  B  P  B  B   ← B-frames decoded after their references
-      //
-      // The decoder's output callback gives us the DTS. We need CTS to know when
-      // each frame is actually displayed, which is what clip.start/end refers to.
-      const dtsToCts = new Map();
-      for (const s of allSamples) {
-        const ts = s.timescale || timescale;
-        dtsToCts.set(Math.round(s.dts * 1_000_000 / ts),
-                     Math.round(s.cts * 1_000_000 / ts));
-      }
-      // The WebCodecs spec requires decoders to echo back the exact timestamp
-      // passed in, but some implementations round differently. The ±2 µs loop
-      // handles that drift without falling back to the wrong DTS value.
-      const lookupCts = dts => {
-        for (const d of [0, 1, -1, 2, -2]) {
-          const v = dtsToCts.get(dts + d);
-          if (v !== undefined) return v;
+      for (let ci = 0; ci < groupGroups.length; ci++) {
+        if (cancelExport) break;
+        encErrClip = ci;
+        const { clip, allSamples, frameSamples } = groupGroups[ci];
+        console.log(`[WC] ${passLabel} clip ${ci}: ${clip.start.toFixed(3)}–${clip.end.toFixed(3)}s | allSamples=${allSamples.length}, frameSamples=${frameSamples.length}`);
+        if (allSamples.length === 0) {
+          console.warn(`[WC] ${passLabel} clip ${ci} ⚠ allSamples is empty — clip window outside video timeline, or videoSamples was empty`);
+        } else {
+          const s0 = allSamples[0], ts0 = s0.timescale || timescale;
+          console.log(`[WC] ${passLabel} clip ${ci} preroll: is_sync=${s0.is_sync}, dts=${(s0.dts/ts0).toFixed(3)}s, offset=${s0.offset}, size=${s0.size}`);
         }
-        return dts; // last resort: treat DTS as CTS (no B-frame offset)
-      };
 
-      // firstOfClip forces the first encoded frame of each clip to be a keyframe
-      // (also called an I-frame — Intra-coded frame).
-      // A keyframe is a complete, fully self-contained image. All other frame types
-      // (P-frames, B-frames) store only differences from other frames and CANNOT
-      // be decoded without prior context. At each clip boundary the concatenated
-      // video must start fresh, so a keyframe is mandatory here.
-      let firstOfClip = true;
-      let framesDecodedThisClip = 0;
+        const clipDataMap = groupDataMaps[ci];
 
-      // Queue for sequentially processing decoded frames one at a time.
-      // The Android hardware decoder (MediaCodec) buffers all input and emits all
-      // frames in a burst during flush(). An async output callback would spawn
-      // hundreds of concurrent coroutines, each holding an ~8 MB decoded 1080p
-      // frame — enough to OOM the tab on a 1+ GB video with many clips.
-      // Instead, the synchronous output callback enqueues each frame, and
-      // drainFrames() processes them one at a time so only one live frame exists.
-      const pendingFrames = [];
-      const reorderBuffer = []; // { ctsMicros, bitmap }, kept CTS-sorted, bounded to ≤ REORDER_DEPTH entries
-      let drainingFrames  = false;
-
-      // Encodes frames from the front of reorderBuffer.
-      // force=false: keeps REORDER_DEPTH frames buffered for B-frame reordering.
-      // force=true: drains everything (called after decoder.flush() completes).
-      //
-      // Using a bounded buffer rather than sorting all frames at once fixes three
-      // problems simultaneously:
-      //   1. OOM: never holds more than REORDER_DEPTH ImageBitmaps (~64 MB at 1080p).
-      //   2. Decoder stall: VideoFrames are closed in drainFrames before this runs,
-      //      so Android's MediaCodec output buffer pool is always freed promptly.
-      //   3. iOS choppiness: frames are encoded in CTS (display) order, giving the
-      //      encoder monotonically increasing timestamps with no clamping.
-      const REORDER_DEPTH = 8; // covers H.264 B-frame reorder depths of up to ~8 frames
-      const encodeFromReorderBuffer = async (force) => {
-        const threshold = force ? 0 : REORDER_DEPTH;
-        while (reorderBuffer.length > threshold && !encErr && !cancelExport) {
-          const { ctsMicros, bitmap } = reorderBuffer.shift();
-          const ctsSec   = ctsMicros / 1_000_000;
-          const keyFrame = firstOfClip;
-          firstOfClip    = false;
-
-          const rawOutTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
-          // Two guards in one:
-          //   1. Monotonicity: if rawOutTs didn't advance past the previous frame, clamp up.
-          //   2. Non-negative: muxer rejects negative timestamps; a frame whose CTS lands
-          //      within the ±2 ms clip-start tolerance can produce rawOutTs slightly < 0.
-          //      Clamping to 0 is correct — the frame belongs at the very start of the clip.
-          const outTs = Math.max(0,
-            lastEncodedTs >= 0 && rawOutTs <= lastEncodedTs
-              ? lastEncodedTs + 1
-              : rawOutTs
-          );
-          if (outTs !== rawOutTs) {
-            console.log(`[WC] clip ${ci} outTs adjusted: raw=${rawOutTs} → ${outTs} (lastEncodedTs=${lastEncodedTs}, ctsSec=${ctsSec.toFixed(6)})`);
+        // DTS (Decode Time Stamp): the order in which the decoder must process frames.
+        // CTS (Composition Time Stamp): the order in which frames should be displayed.
+        // These differ when the video uses B-frames (Bidirectional frames).
+        //
+        // B-frames compress a frame by storing only its difference from BOTH a past
+        // and a future frame. This means frame display order ≠ decode order.
+        // Example stream (I=keyframe, P=predicted from past, B=bidirectional):
+        //   Display order:  I  B  B  P  B  B  P
+        //   Decode order:   I  P  B  B  P  B  B   ← B-frames decoded after their references
+        //
+        // The decoder's output callback gives us the DTS. We need CTS to know when
+        // each frame is actually displayed, which is what clip.start/end refers to.
+        const dtsToCts = new Map();
+        for (const s of allSamples) {
+          const ts = s.timescale || timescale;
+          dtsToCts.set(Math.round(s.dts * 1_000_000 / ts),
+                       Math.round(s.cts * 1_000_000 / ts));
+        }
+        // The WebCodecs spec requires decoders to echo back the exact timestamp
+        // passed in, but some implementations round differently. The ±2 µs loop
+        // handles that drift without falling back to the wrong DTS value.
+        const lookupCts = dts => {
+          for (const d of [0, 1, -1, 2, -2]) {
+            const v = dtsToCts.get(dts + d);
+            if (v !== undefined) return v;
           }
-          lastEncodedTs = outTs;
+          return dts; // last resort: treat DTS as CTS (no B-frame offset)
+        };
 
-          if (framesEncoded === 0) {
-            console.log(`[WC] clip ${ci} — first ImageBitmap: ${bitmap.width}×${bitmap.height}`);
-          }
-          if (trackRotation === 0) {
-            ctx.drawImage(bitmap, 0, 0, width, height);
-          } else {
-            ctx.save();
-            if (trackRotation === 90) {
-              ctx.translate(outW, 0);
-              ctx.rotate(Math.PI / 2);
-            } else if (trackRotation === 180) {
-              ctx.translate(outW, outH);
-              ctx.rotate(Math.PI);
-            } else { // 270
-              ctx.translate(0, outH);
-              ctx.rotate(-Math.PI / 2);
+        // firstOfClip forces the first encoded frame of each clip to be a keyframe
+        // (also called an I-frame — Intra-coded frame).
+        // A keyframe is a complete, fully self-contained image. All other frame types
+        // (P-frames, B-frames) store only differences from other frames and CANNOT
+        // be decoded without prior context. At each clip boundary the concatenated
+        // video must start fresh, so a keyframe is mandatory here.
+        let firstOfClip = true;
+        let framesDecodedThisClip = 0;
+
+        // Queue for sequentially processing decoded frames one at a time.
+        // The Android hardware decoder (MediaCodec) buffers all input and emits all
+        // frames in a burst during flush(). An async output callback would spawn
+        // hundreds of concurrent coroutines, each holding an ~8 MB decoded 1080p
+        // frame — enough to OOM the tab on a 1+ GB video with many clips.
+        // Instead, the synchronous output callback enqueues each frame, and
+        // drainFrames() processes them one at a time so only one live frame exists.
+        const pendingFrames = [];
+        const reorderBuffer = []; // { ctsMicros, bitmap }, kept CTS-sorted, bounded to ≤ REORDER_DEPTH entries
+        let drainingFrames  = false;
+
+        // Encodes frames from the front of reorderBuffer.
+        // force=false: keeps REORDER_DEPTH frames buffered for B-frame reordering.
+        // force=true: drains everything (called after decoder.flush() completes).
+        //
+        // Using a bounded buffer rather than sorting all frames at once fixes three
+        // problems simultaneously:
+        //   1. OOM: never holds more than REORDER_DEPTH ImageBitmaps (~64 MB at 1080p).
+        //   2. Decoder stall: VideoFrames are closed in drainFrames before this runs,
+        //      so Android's MediaCodec output buffer pool is always freed promptly.
+        //   3. iOS choppiness: frames are encoded in CTS (display) order, giving the
+        //      encoder monotonically increasing timestamps with no clamping.
+        const REORDER_DEPTH = 8; // covers H.264 B-frame reorder depths of up to ~8 frames
+        const encodeFromReorderBuffer = async (force) => {
+          const threshold = force ? 0 : REORDER_DEPTH;
+          while (reorderBuffer.length > threshold && !encErr && !cancelExport) {
+            const { ctsMicros, bitmap } = reorderBuffer.shift();
+            const ctsSec   = ctsMicros / 1_000_000;
+            const keyFrame = firstOfClip;
+            firstOfClip    = false;
+
+            const rawOutTs = Math.round(((ctsSec - clip.start) + cumulativeDuration) * 1_000_000);
+            // Two guards in one:
+            //   1. Monotonicity: if rawOutTs didn't advance past the previous frame, clamp up.
+            //   2. Non-negative: muxer rejects negative timestamps; a frame whose CTS lands
+            //      within the ±2 ms clip-start tolerance can produce rawOutTs slightly < 0.
+            //      Clamping to 0 is correct — the frame belongs at the very start of the clip.
+            const outTs = Math.max(0,
+              lastEncodedTs >= 0 && rawOutTs <= lastEncodedTs
+                ? lastEncodedTs + 1
+                : rawOutTs
+            );
+            if (outTs !== rawOutTs) {
+              console.log(`[WC] ${passLabel} clip ${ci} outTs adjusted: raw=${rawOutTs} → ${outTs} (lastEncodedTs=${lastEncodedTs}, ctsSec=${ctsSec.toFixed(6)})`);
             }
-            ctx.drawImage(bitmap, 0, 0, width, height);
-            ctx.restore();
-          }
-          bitmap.close();
-          if (framesEncoded === 0) {
-            // Sample a 4×4 block in the centre of the frame.
-            // If all values are 0, createImageBitmap returned black or drawImage failed.
-            const cx = Math.floor(outW / 2), cy = Math.floor(outH / 2);
-            const px = ctx.getImageData(cx, cy, 4, 4);
-            const nonZero = Array.from(px.data).some(v => v > 0);
-            console.log(`[WC] clip ${ci} — canvas pixels at centre after drawImage: `
-              + (nonZero ? 'NON-BLACK ✓' : '⚠ ALL BLACK')
-              + ' | first 8 bytes: [' + Array.from(px.data.slice(0, 8)).join(', ') + ']');
-          }
+            lastEncodedTs = outTs;
 
-          if (!disableScoreboard) {
-            // wcScoreAt scans the global `clips` array to count home_point and
-            // away_point entries whose end time is ≤ ctsSec (original timeline).
-            const { h, a } = wcScoreAt(ctsSec);
-            wcDrawScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a);
-          }
-          if (!disableWatermark) wcDrawWatermark(ctx, outW, outH, watermarkLogo);
+            if (framesEncoded === framesAtGroupStart) {
+              console.log(`[WC] ${passLabel} clip ${ci} — first ImageBitmap: ${bitmap.width}×${bitmap.height}`);
+            }
+            if (trackRotation === 0) {
+              ctx.drawImage(bitmap, 0, 0, width, height);
+            } else {
+              ctx.save();
+              if (trackRotation === 90) {
+                ctx.translate(outW, 0);
+                ctx.rotate(Math.PI / 2);
+              } else if (trackRotation === 180) {
+                ctx.translate(outW, outH);
+                ctx.rotate(Math.PI);
+              } else { // 270
+                ctx.translate(0, outH);
+                ctx.rotate(-Math.PI / 2);
+              }
+              ctx.drawImage(bitmap, 0, 0, width, height);
+              ctx.restore();
+            }
+            bitmap.close();
+            if (framesEncoded === framesAtGroupStart) {
+              // Sample a 4×4 block in the centre of the frame.
+              // If all values are 0, createImageBitmap returned black or drawImage failed.
+              const cx = Math.floor(outW / 2), cy = Math.floor(outH / 2);
+              const px = ctx.getImageData(cx, cy, 4, 4);
+              const nonZero = Array.from(px.data).some(v => v > 0);
+              console.log(`[WC] ${passLabel} clip ${ci} — canvas pixels at centre after drawImage: `
+                + (nonZero ? 'NON-BLACK ✓' : '⚠ ALL BLACK')
+                + ' | first 8 bytes: [' + Array.from(px.data.slice(0, 8)).join(', ') + ']');
+            }
 
-          // Wrap the canvas pixels in a VideoFrame for the encoder.
-          // VideoFrame is the uncompressed image representation (raw pixel data).
-          // We use getImageData → raw buffer rather than VideoFrame(OffscreenCanvas)
-          // because iOS Safari silently discards frames constructed directly from an
-          // OffscreenCanvas, producing no encoder output and no error.
-          const imageData = ctx.getImageData(0, 0, outW, outH);
-          const vf = new VideoFrame(imageData.data.buffer, {
-              format: 'RGBA',
-              codedWidth: outW,
-              codedHeight: outH,
-              timestamp: outTs,
-          });
-          if (framesEncoded === 0) {
-            console.log(`[WC] clip ${ci} — VideoFrame from canvas: `
-              + `${vf.codedWidth}×${vf.codedHeight}, format: ${vf.format}, ts: ${vf.timestamp}`);
+            if (showScoreboard) {
+              const { h, a } = wcScoreAt(ctsSec);
+              wcDrawActiveScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h);
+            }
+
+            // Wrap the canvas pixels in a VideoFrame for the encoder.
+            // VideoFrame is the uncompressed image representation (raw pixel data).
+            // We use getImageData → raw buffer rather than VideoFrame(OffscreenCanvas)
+            // because iOS Safari silently discards frames constructed directly from an
+            // OffscreenCanvas, producing no encoder output and no error.
+            const imageData = ctx.getImageData(0, 0, outW, outH);
+            const vf = new VideoFrame(imageData.data.buffer, {
+                format: 'RGBA',
+                codedWidth: outW,
+                codedHeight: outH,
+                timestamp: outTs,
+            });
+            if (framesEncoded === framesAtGroupStart) {
+              console.log(`[WC] ${passLabel} clip ${ci} — VideoFrame from canvas: `
+                + `${vf.codedWidth}×${vf.codedHeight}, format: ${vf.format}, ts: ${vf.timestamp}`);
+            }
+            try {
+              encoder.encode(vf, { keyFrame });
+            } catch (syncErr) {
+              console.error('[WC] encoder.encode() threw synchronously:', syncErr.name, syncErr.message, 'outTs:', outTs, 'keyFrame:', keyFrame);
+              encErr = syncErr;
+            }
+            vf.close(); // Release GPU/memory immediately; encoder has its own copy.
+            framesEncoded++;
+            // Encoder backpressure: on Android the hardware encoder (MediaCodec)
+            // and decoder share the same resource pool. If we let the encoder queue
+            // grow unbounded (~132 frames), the decoder cannot complete flush() and
+            // hangs indefinitely waiting for those MediaCodec resources to free up.
+            // Yielding here until encodeQueueSize drops to a small number keeps the
+            // encoder draining continuously and leaves decoder resources available.
+            let backpressureYields = 0;
+            while (encoder.encodeQueueSize > 5 && !encErr && !cancelExport) {
+              await wcYield();
+              backpressureYields++;
+            }
+            if (framesEncoded === framesAtGroupStart + 1) {
+              console.log(`[WC] ${passLabel} clip ${ci} — after first encode: encodeQ=${encoder.encodeQueueSize} chunksOut=${chunksFromEncoder} state=${encoder.state}`);
+            }
+            if (framesEncoded % 20 === 0) {
+              console.log(`[WC] ${passLabel} clip ${ci} encode progress — encoded=${framesEncoded}, encodeQ=${encoder.encodeQueueSize}, chunksOut=${chunksFromEncoder}, bpYields=${backpressureYields}`);
+            }
           }
-          try {
-            encoder.encode(vf, { keyFrame });
-          } catch (syncErr) {
-            console.error('[WC] encoder.encode() threw synchronously:', syncErr.name, syncErr.message, 'outTs:', outTs, 'keyFrame:', keyFrame);
-            encErr = syncErr;
+        };
+
+        // Converts VideoFrames to ImageBitmaps (closing the VideoFrame immediately to
+        // free the decoder's output buffer), inserts each into reorderBuffer in CTS
+        // order, and calls encodeFromReorderBuffer to encode from the front of the
+        // buffer whenever it exceeds REORDER_DEPTH entries.
+        const drainFrames = async () => {
+          if (drainingFrames) return;
+          drainingFrames = true;
+          console.log(`[WC] ${passLabel} clip ${ci} drainFrames — queue depth on entry: ${pendingFrames.length}`);
+          while (pendingFrames.length > 0 && !cancelExport && !encErr) {
+            const frame = pendingFrames.shift();
+            try {
+              framesDecodedThisClip++;
+              // Translate the decoder's DTS-based timestamp to display time (CTS).
+              const rawCtsMicros = lookupCts(frame.timestamp);
+              // Guard: CTS must be within 1 s of DTS. B-frame reorder depths are
+              // typically < 200 ms; anything larger indicates a corrupt/missing CTTS
+              // entry that would produce a garbage output timestamp.
+              const ctsMicros = (Number.isFinite(rawCtsMicros)
+                && Math.abs(rawCtsMicros - frame.timestamp) <= 1_000_000)
+                ? rawCtsMicros : frame.timestamp;
+              if (rawCtsMicros !== ctsMicros)
+                console.warn(`[WC] ${passLabel} clip ${ci} bad CTS: dts=${frame.timestamp} rawCts=${rawCtsMicros} → using dts`);
+              const ctsSec    = ctsMicros / 1_000_000;
+              if (framesDecodedThisClip === 1) {
+                console.log(`[WC] ${passLabel} clip ${ci} — first decoded frame | format: ${frame.format}`
+                  + ` | coded: ${frame.codedWidth}×${frame.codedHeight}`
+                  + ` | display: ${frame.displayWidth}×${frame.displayHeight}`
+                  + ` | ts: ${frame.timestamp} → ctsSec: ${ctsSec.toFixed(3)}`
+                  + ` | colorSpace: ${JSON.stringify(frame.colorSpace)}`
+                  + ` | in clip window: ${ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002}`);
+              }
+
+              // Only process frames within the clip's display window.
+              // Frames before clip.start are pre-roll: the decoder needed them to
+              // build up its reference frame buffer, but we don't want them in output.
+              //
+              // Why ±0.002 s (2 ms) tolerance?
+              // The clip boundaries (clip.start, clip.end) are floating-point seconds.
+              // The frame's CTS is computed by dividing an integer timestamp by a
+              // timescale integer, which introduces small rounding errors. A frame
+              // intended to land exactly at clip.start might come out as
+              // clip.start + 0.00011 s and get excluded without this tolerance.
+              // 2 ms is much less than one frame (≈33 ms at 30fps), so it can't
+              // accidentally pull in frames from outside the intended range.
+              if (ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002
+                  && !cancelExport && !encErr) {
+                // Hardware-decoded VideoFrames on Android are stored in a GPU-resident
+                // YUV texture (produced by MediaCodec, the Android hardware codec).
+                // createImageBitmap routes through the browser's compositing pipeline,
+                // correctly handling GPU textures on every platform. The result is a
+                // CPU-accessible RGBA ImageBitmap that can be held after the frame closes.
+                const bitmap = await createImageBitmap(frame);
+                // Insert into reorderBuffer maintaining CTS sorted order.
+                // For B-frame sources the decoder emits in DTS order, which may differ
+                // from CTS order by up to a few frames. Sorted insertion keeps the buffer
+                // in display order so encodeFromReorderBuffer always encodes the earliest
+                // displayable frame first.
+                const insertIdx = reorderBuffer.findIndex(e => e.ctsMicros > ctsMicros);
+                if (insertIdx === -1) reorderBuffer.push({ ctsMicros, bitmap });
+                else reorderBuffer.splice(insertIdx, 0, { ctsMicros, bitmap });
+                // Encode from the front of the buffer while we have enough lookahead.
+                // frame.close() in the finally below frees the MediaCodec output buffer
+                // before this encode step, so the decoder is never blocked waiting for room.
+                await encodeFromReorderBuffer(false);
+              }
+            } catch (e) {
+              if (!encErr) { encErr = e; console.error('[WC] frame processing error:', e.name, e.message); }
+            } finally {
+              // ALWAYS close the decoded frame, even pre-roll frames we don't use.
+              // Decoded frames hold GPU-allocated memory. Forgetting to close them
+              // will exhaust GPU memory and cause the decoder pipeline to stall.
+              frame.close();
+            }
           }
-          vf.close(); // Release GPU/memory immediately; encoder has its own copy.
-          framesEncoded++;
-          const _now = Date.now();
-          if (_now - lastProgressUpdate >= 50) {
-            lastProgressUpdate = _now;
-            const pct = 11 + Math.round((framesEncoded / totalFrames) * 80);
-            setProgress(pct,
-              `Encoding frame ${framesEncoded} / ${totalFrames}`,
-              `Clip ${ci + 1} / ${exportClips.length}`);
+          // Drop any frames left in the queue (cancel or error path).
+          while (pendingFrames.length > 0) pendingFrames.shift().close();
+          console.log(`[WC] ${passLabel} clip ${ci} drainFrames done — totalDecoded=${framesDecodedThisClip}, reorderBuffer=${reorderBuffer.length}, encErr=${!!encErr}`);
+          drainingFrames = false;
+        };
+
+        // Each clip gets its own fresh VideoDecoder so there is no leftover state
+        // (reference frames, B-frame buffers) carried over from the previous clip.
+        const decoder = new VideoDecoder({
+          output: (frame) => {
+            // Synchronous: just enqueue. drainFrames() does the async work.
+            // This prevents Android's burst-output from spawning hundreds of
+            // concurrent coroutines, each holding an ~8 MB decoded frame in memory.
+            pendingFrames.push(frame);
+            drainFrames(); // intentionally not awaited
+          },
+          error: e => {
+            encErr = e;
+            console.error('[WC] DECODER ERROR at clip', ci, '—', e.name, e.message, e);
+          },
+        });
+        decoder.configure(decoderConfig);
+        console.log(`[WC] ${passLabel} clip ${ci} decoder state after configure: ${decoder.state}`);
+
+        let samplesSent = 0;
+        for (let si = 0; si < allSamples.length; si++) {
+          if (encErr || decoder.state === 'closed') {
+            console.warn(`[WC] ${passLabel} clip ${ci} decode loop exited early at si=${si}: encErr=${!!encErr}, decoderState=${decoder.state}`);
+            break;
           }
-          // Encoder backpressure: on Android the hardware encoder (MediaCodec)
-          // and decoder share the same resource pool. If we let the encoder queue
-          // grow unbounded (~132 frames), the decoder cannot complete flush() and
-          // hangs indefinitely waiting for those MediaCodec resources to free up.
-          // Yielding here until encodeQueueSize drops to a small number keeps the
-          // encoder draining continuously and leaves decoder resources available.
-          let backpressureYields = 0;
-          while (encoder.encodeQueueSize > 5 && !encErr && !cancelExport) {
+          const s  = allSamples[si];
+          const ts = s.timescale || timescale;
+          const sampleData = clipDataMap.get(s.offset);
+          if (si === 0) {
+            console.log(`[WC] ${passLabel} clip ${ci} first decode() call: type=${s.is_sync?'key':'delta'}, ts=${Math.round(s.dts*1e6/ts)}, dataLen=${sampleData.byteLength}`);
+          }
+          // Feed a single compressed frame ("sample") to the decoder.
+          // is_sync = true → keyframe (I-frame); false → P-frame or B-frame ("delta").
+          // Timestamps are in microseconds; dts = decode order, duration = frame length.
+          // The decoder queues this and calls output() asynchronously when ready.
+          decoder.decode(new EncodedVideoChunk({
+            type:      s.is_sync ? 'key' : 'delta',
+            timestamp: Math.round(s.dts * 1_000_000 / ts),
+            duration:  Math.round(s.duration * 1_000_000 / ts),
+            data:      sampleData,
+          }));
+          samplesSent++;
+          // JavaScript is single-threaded. While we're in this synchronous loop,
+          // no callbacks (including the decoder's output()) can fire. Yielding every
+          // 50 samples hands control back to the browser for one tick, letting the
+          // decoder drain its output queue and free GPU memory incrementally.
+          // 50 samples ≈ 1.7 s of video at 30fps — frequent enough to keep memory
+          // low without thrashing the event loop with constant yields.
+          if ((si + 1) % 50 === 0) {
             await wcYield();
-            backpressureYields++;
-          }
-          if (framesEncoded === 1) {
-            console.log(`[WC] clip ${ci} — after first encode: encodeQ=${encoder.encodeQueueSize} chunksOut=${chunksFromEncoder} state=${encoder.state}`);
-          }
-          if (framesEncoded % 20 === 0) {
-            console.log(`[WC] clip ${ci} encode progress — encoded=${framesEncoded}, encodeQ=${encoder.encodeQueueSize}, chunksOut=${chunksFromEncoder}, bpYields=${backpressureYields}`);
+            console.log(`[WC] ${passLabel} clip ${ci} sample ${si}: framesDecoded=${framesDecodedThisClip} framesEncoded=${framesEncoded} decoderState=${decoder.state} decodeQ=${decoder.decodeQueueSize} encodeQ=${encoder.encodeQueueSize}`);
+            const pct = progressBase + Math.round(((framesEncoded - framesAtGroupStart) / groupTotalFrames) * progressRange);
+            setProgress(pct,
+              `Encoding frame ${framesEncoded - framesAtGroupStart} / ${groupTotalFrames}`,
+              `${passLabel} clip ${ci + 1} / ${groupGroups.length}`);
           }
         }
-      };
+        console.log(`[WC] ${passLabel} clip ${ci} decode loop done: samplesSent=${samplesSent}, decoderState=${decoder.state}`);
 
-      // Converts VideoFrames to ImageBitmaps (closing the VideoFrame immediately to
-      // free the decoder's output buffer), inserts each into reorderBuffer in CTS
-      // order, and calls encodeFromReorderBuffer to encode from the front of the
-      // buffer whenever it exceeds REORDER_DEPTH entries.
-      const drainFrames = async () => {
-        if (drainingFrames) return;
-        drainingFrames = true;
-        console.log(`[WC] clip ${ci} drainFrames — queue depth on entry: ${pendingFrames.length}`);
-        while (pendingFrames.length > 0 && !cancelExport && !encErr) {
-          const frame = pendingFrames.shift();
+        if (encErr) throw encErr;
+        console.log(`[WC] ${passLabel} clip ${ci} pre-flush — decoded=${framesDecodedThisClip}, encoded=${framesEncoded}, pendingFrames=${pendingFrames.length}, drainingFrames=${drainingFrames}`);
+        // flush() signals "no more input" to the decoder and waits until it has
+        // emitted all remaining output frames (including buffered B-frames).
+        // Three-way race: normal completion, 20 s stall timeout, or user cancel.
+        // The cancel leg polls every 50 ms — frequent enough that cancel feels instant
+        // to the user, but not so frequent (e.g. 1 ms) that it burns CPU in the loop.
+        // It resolves (not rejects) so the try block falls through to decoder.close()
+        // cleanly rather than jumping to the catch block.
+        if (decoder.state !== 'closed') {
+          let stallTimer, cancelPoll;
           try {
-            framesDecodedThisClip++;
-            // Translate the decoder's DTS-based timestamp to display time (CTS).
-            const rawCtsMicros = lookupCts(frame.timestamp);
-            // Guard: CTS must be within 1 s of DTS. B-frame reorder depths are
-            // typically < 200 ms; anything larger indicates a corrupt/missing CTTS
-            // entry that would produce a garbage output timestamp.
-            const ctsMicros = (Number.isFinite(rawCtsMicros)
-              && Math.abs(rawCtsMicros - frame.timestamp) <= 1_000_000)
-              ? rawCtsMicros : frame.timestamp;
-            if (rawCtsMicros !== ctsMicros)
-              console.warn(`[WC] clip ${ci} bad CTS: dts=${frame.timestamp} rawCts=${rawCtsMicros} → using dts`);
-            const ctsSec    = ctsMicros / 1_000_000;
-            if (framesDecodedThisClip === 1) {
-              console.log(`[WC] clip ${ci} — first decoded frame | format: ${frame.format}`
-                + ` | coded: ${frame.codedWidth}×${frame.codedHeight}`
-                + ` | display: ${frame.displayWidth}×${frame.displayHeight}`
-                + ` | ts: ${frame.timestamp} → ctsSec: ${ctsSec.toFixed(3)}`
-                + ` | colorSpace: ${JSON.stringify(frame.colorSpace)}`
-                + ` | in clip window: ${ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002}`);
-            }
-
-            // Only process frames within the clip's display window.
-            // Frames before clip.start are pre-roll: the decoder needed them to
-            // build up its reference frame buffer, but we don't want them in output.
-            //
-            // Why ±0.002 s (2 ms) tolerance?
-            // The clip boundaries (clip.start, clip.end) are floating-point seconds.
-            // The frame's CTS is computed by dividing an integer timestamp by a
-            // timescale integer, which introduces small rounding errors. A frame
-            // intended to land exactly at clip.start might come out as
-            // clip.start + 0.00011 s and get excluded without this tolerance.
-            // 2 ms is much less than one frame (≈33 ms at 30fps), so it can't
-            // accidentally pull in frames from outside the intended range.
-            if (ctsSec >= clip.start - 0.002 && ctsSec <= clip.end + 0.002
-                && !cancelExport && !encErr) {
-              // Hardware-decoded VideoFrames on Android are stored in a GPU-resident
-              // YUV texture (produced by MediaCodec, the Android hardware codec).
-              // createImageBitmap routes through the browser's compositing pipeline,
-              // correctly handling GPU textures on every platform. The result is a
-              // CPU-accessible RGBA ImageBitmap that can be held after the frame closes.
-              const bitmap = await createImageBitmap(frame);
-              // Insert into reorderBuffer maintaining CTS sorted order.
-              // For B-frame sources the decoder emits in DTS order, which may differ
-              // from CTS order by up to a few frames. Sorted insertion keeps the buffer
-              // in display order so encodeFromReorderBuffer always encodes the earliest
-              // displayable frame first.
-              const insertIdx = reorderBuffer.findIndex(e => e.ctsMicros > ctsMicros);
-              if (insertIdx === -1) reorderBuffer.push({ ctsMicros, bitmap });
-              else reorderBuffer.splice(insertIdx, 0, { ctsMicros, bitmap });
-              // Encode from the front of the buffer while we have enough lookahead.
-              // frame.close() in the finally below frees the MediaCodec output buffer
-              // before this encode step, so the decoder is never blocked waiting for room.
-              await encodeFromReorderBuffer(false);
-            }
-          } catch (e) {
-            if (!encErr) { encErr = e; console.error('[WC] frame processing error:', e.name, e.message); }
-          } finally {
-            // ALWAYS close the decoded frame, even pre-roll frames we don't use.
-            // Decoded frames hold GPU-allocated memory. Forgetting to close them
-            // will exhaust GPU memory and cause the decoder pipeline to stall.
-            frame.close();
-          }
-        }
-        // Drop any frames left in the queue (cancel or error path).
-        while (pendingFrames.length > 0) pendingFrames.shift().close();
-        console.log(`[WC] clip ${ci} drainFrames done — totalDecoded=${framesDecodedThisClip}, reorderBuffer=${reorderBuffer.length}, encErr=${!!encErr}`);
-        drainingFrames = false;
-      };
-
-      // Each clip gets its own fresh VideoDecoder so there is no leftover state
-      // (reference frames, B-frame buffers) carried over from the previous clip.
-      const decoder = new VideoDecoder({
-        output: (frame) => {
-          // Synchronous: just enqueue. drainFrames() does the async work.
-          // This prevents Android's burst-output from spawning hundreds of
-          // concurrent coroutines, each holding an ~8 MB decoded frame in memory.
-          pendingFrames.push(frame);
-          drainFrames(); // intentionally not awaited
-        },
-        error: e => {
-          encErr = e;
-          console.error('[WC] DECODER ERROR at clip', ci, '—', e.name, e.message, e);
-        },
-      });
-      decoder.configure(decoderConfig);
-      console.log(`[WC] clip ${ci} decoder state after configure: ${decoder.state}`);
-
-      let samplesSent = 0;
-      for (let si = 0; si < allSamples.length; si++) {
-        if (encErr || decoder.state === 'closed') {
-          console.warn(`[WC] clip ${ci} decode loop exited early at si=${si}: encErr=${!!encErr}, decoderState=${decoder.state}`);
-          break;
-        }
-        const s  = allSamples[si];
-        const ts = s.timescale || timescale;
-        const sampleData = clipDataMap.get(s.offset);
-        if (si === 0) {
-          console.log(`[WC] clip ${ci} first decode() call: type=${s.is_sync?'key':'delta'}, ts=${Math.round(s.dts*1e6/ts)}, dataLen=${sampleData.byteLength}`);
-        }
-        // Feed a single compressed frame ("sample") to the decoder.
-        // is_sync = true → keyframe (I-frame); false → P-frame or B-frame ("delta").
-        // Timestamps are in microseconds; dts = decode order, duration = frame length.
-        // The decoder queues this and calls output() asynchronously when ready.
-        decoder.decode(new EncodedVideoChunk({
-          type:      s.is_sync ? 'key' : 'delta',
-          timestamp: Math.round(s.dts * 1_000_000 / ts),
-          duration:  Math.round(s.duration * 1_000_000 / ts),
-          data:      sampleData,
-        }));
-        samplesSent++;
-        // JavaScript is single-threaded. While we're in this synchronous loop,
-        // no callbacks (including the decoder's output()) can fire. Yielding every
-        // 50 samples hands control back to the browser for one tick, letting the
-        // decoder drain its output queue and free GPU memory incrementally.
-        // 50 samples ≈ 1.7 s of video at 30fps — frequent enough to keep memory
-        // low without thrashing the event loop with constant yields.
-        if ((si + 1) % 50 === 0) {
-          await wcYield();
-          console.log(`[WC] clip ${ci} sample ${si}: framesDecoded=${framesDecodedThisClip} framesEncoded=${framesEncoded} decoderState=${decoder.state} decodeQ=${decoder.decodeQueueSize} encodeQ=${encoder.encodeQueueSize}`);
-        }
-      }
-      console.log(`[WC] clip ${ci} decode loop done: samplesSent=${samplesSent}, decoderState=${decoder.state}`);
-
-      if (encErr) throw encErr;
-      console.log(`[WC] clip ${ci} pre-flush — decoded=${framesDecodedThisClip}, encoded=${framesEncoded}, pendingFrames=${pendingFrames.length}, drainingFrames=${drainingFrames}`);
-      // flush() signals "no more input" to the decoder and waits until it has
-      // emitted all remaining output frames (including buffered B-frames).
-      // Three-way race: normal completion, 20 s stall timeout, or user cancel.
-      // The cancel leg polls every 50 ms — frequent enough that cancel feels instant
-      // to the user, but not so frequent (e.g. 1 ms) that it burns CPU in the loop.
-      // It resolves (not rejects) so the try block falls through to decoder.close()
-      // cleanly rather than jumping to the catch block.
-      if (decoder.state !== 'closed') {
-        let stallTimer, cancelPoll;
-        try {
-          // Progress-based stall detection: reset the 20 s window every time a new
+            // Progress-based stall detection: reset the 20 s window every time a new
           // frame is decoded. A fixed wall-clock timeout fires on long clips even when
           // the decoder is making steady progress — MediaCodec output buffers fill up
           // and are freed one-at-a-time by drainFrames, so flush() takes O(frames).
           let lastDecodedCount = framesDecodedThisClip;
           await Promise.race([
-            decoder.flush(),
-            new Promise((_, rej) => {
+              decoder.flush(),
+              new Promise((_, rej) => {
               stallTimer = setInterval(() => {
                 if (framesDecodedThisClip > lastDecodedCount) {
                   lastDecodedCount = framesDecodedThisClip;
                 } else {
                   clearInterval(stallTimer);
-                  rej(new Error('Decoder stalled — try a different video file'));
+                    rej(new Error('Decoder stalled — try a different video file'));
                 }
               }, 20_000);
             }),
-            new Promise(res => { cancelPoll = setInterval(() => {
-              if (cancelExport) { clearInterval(cancelPoll); res(); }
-            }, 50); }),
-          ]);
-        } finally {
-          clearInterval(stallTimer);
-          clearInterval(cancelPoll);
+              new Promise(res => { cancelPoll = setInterval(() => {
+                if (cancelExport) { clearInterval(cancelPoll); res(); }
+              }, 50); }),
+            ]);
+          } finally {
+            clearInterval(stallTimer);
+            clearInterval(cancelPoll);
+          }
         }
-      }
-      console.log(`[WC] clip ${ci} post-flush decoder state: ${decoder.state}`);
-      // decoder.close() is deferred until after the drain wait below.
-      // Closing it here (while drainFrames may still be processing a frame) can
-      // invalidate the GPU texture backing the outstanding VideoFrame on Android,
-      // causing createImageBitmap to hang indefinitely.
+        console.log(`[WC] ${passLabel} clip ${ci} post-flush decoder state: ${decoder.state}`);
+        // decoder.close() is deferred until after the drain wait below.
+        // Closing it here (while drainFrames may still be processing a frame) can
+        // invalidate the GPU texture backing the outstanding VideoFrame on Android,
+        // causing createImageBitmap to hang indefinitely.
 
-      // Wait for the frame queue to finish draining before continuing.
-      // On Android the hardware decoder emits all frames in a burst during flush(),
-      // so drainFrames() is still running asynchronously when flush() resolves.
-      let drainWaitTicks = 0;
-      while ((drainingFrames || pendingFrames.length > 0) && !encErr && !cancelExport) {
-        await wcYield();
-        if (++drainWaitTicks % 200 === 0) {
-          console.log(`[WC] clip ${ci} drain wait spinning — drainingFrames=${drainingFrames}, pendingFrames=${pendingFrames.length}, tick=${drainWaitTicks}`);
+        // Wait for the frame queue to finish draining before continuing.
+        // On Android the hardware decoder emits all frames in a burst during flush(),
+        // so drainFrames() is still running asynchronously when flush() resolves.
+        let drainWaitTicks = 0;
+        while ((drainingFrames || pendingFrames.length > 0) && !encErr && !cancelExport) {
+          await wcYield();
+          if (++drainWaitTicks % 200 === 0) {
+            console.log(`[WC] ${passLabel} clip ${ci} drain wait spinning — drainingFrames=${drainingFrames}, pendingFrames=${pendingFrames.length}, tick=${drainWaitTicks}`);
+          }
         }
+        // Drop any leftover frames on the cancel/error path.
+        while (pendingFrames.length > 0) pendingFrames.shift().close();
+        // All outstanding VideoFrames are now closed — safe to close the decoder.
+        if (decoder.state !== 'closed') decoder.close();
+        console.log(`[WC] ${passLabel} clip ${ci} post-flush drain complete — decoded=${framesDecodedThisClip}, reorderBuffer=${reorderBuffer.length}, encoded=${framesEncoded}`);
+
+        // Drain the final frames still buffered in the reorder window.
+        // During decoding, encodeFromReorderBuffer(false) kept REORDER_DEPTH frames
+        // back as lookahead. Now that all frames have been decoded and the VideoDecoder
+        // is closed, we flush the remainder in CTS order.
+        await encodeFromReorderBuffer(true);
+        // Drop any remaining bitmaps on cancel/error path.
+        while (reorderBuffer.length > 0) reorderBuffer.shift().bitmap.close();
+
+        clipDataMap.clear(); // release compressed frame bytes; no longer needed after decode
+        console.log(`[WC] ${passLabel} clip ${ci} summary: decoded=${framesDecodedThisClip}, encoded=${framesEncoded} total so far`);
+
+        // Flush the encoder after each clip so all buffered frames are compressed
+        // and released from GPU memory before the next clip's decoder starts.
+        // Without this, frames pile up across clips and exhaust GPU memory.
+        // Skip on the last clip — the flush after the group handles that.
+        if (ci < groupGroups.length - 1 && !cancelExport && !encErr) {
+          console.log(`[WC] flushing encoder after ${passLabel} clip ${ci}, queue was:`, encoder.encodeQueueSize);
+          await encoder.flush();
+          console.log(`[WC] encoder flushed, queue now:`, encoder.encodeQueueSize);
+        }
+
+        cumulativeDuration += clip.end - clip.start;
       }
-      // Drop any leftover frames on the cancel/error path.
-      while (pendingFrames.length > 0) pendingFrames.shift().close();
-      // All outstanding VideoFrames are now closed — safe to close the decoder.
-      if (decoder.state !== 'closed') decoder.close();
-      console.log(`[WC] clip ${ci} post-flush drain complete — decoded=${framesDecodedThisClip}, reorderBuffer=${reorderBuffer.length}, encoded=${framesEncoded}`);
+    }; // end encodeGroup
 
-      // Drain the final frames still buffered in the reorder window.
-      // During decoding, encodeFromReorderBuffer(false) kept REORDER_DEPTH frames
-      // back as lookahead. Now that all frames have been decoded and the VideoDecoder
-      // is closed, we flush the remainder in CTS order.
-      await encodeFromReorderBuffer(true);
-      // Drop any remaining bitmaps on cancel/error path.
-      while (reorderBuffer.length > 0) reorderBuffer.shift().bitmap.close();
-
-      clipDataMap.clear(); // release compressed frame bytes; no longer needed after decode
-      console.log(`[WC] clip ${ci} summary: decoded=${framesDecodedThisClip}, encoded=${framesEncoded} total so far`);
-
-      // Flush the encoder after each clip so all buffered frames are compressed
-      // and released from GPU memory before the next clip's decoder starts.
-      // Without this, frames pile up across clips and exhaust GPU memory.
-      // Skip on the last clip — the flush after the loop handles that.
-      if (ci < clipGroups.length - 1 && !cancelExport && !encErr) {
-        console.log(`[WC] flushing encoder after clip ${ci}, queue was:`, encoder.encodeQueueSize);
-        await encoder.flush();
-        console.log(`[WC] encoder flushed, queue now:`, encoder.encodeQueueSize);
-      }
-
-      cumulativeDuration += clip.end - clip.start;
+    if (exportCombined) {
+      // Pass 1: highlighted clips, no scoreboard.
+      setProgress(21, 'Part 1/2 — Highlights…');
+      await encodeGroup(hlGroups, hlDataMaps, false, 21, 34, 'Highlights');
+      if (cancelExport) return;
+      if (encErr) throw encErr;
+      // Flush the highlights encoder pass and create a fresh encoder for the full match.
+      // A new VideoEncoder instance forces an IDR (keyframe) at the very first frame of
+      // pass 2, making the full-match section independently seekable in the output file.
+      console.log('[WC] combined: flushing encoder between passes');
+      setProgress(55, 'Starting full match…');
+      await encoder.flush();
+      encoder.close();
+      makeEncoder();
+      // Pass 2: all clips, with scoreboard.
+      setProgress(55, 'Part 2/2 — Full match…');
+      await encodeGroup(clipGroups, allClipDataMaps, true, 55, 38, 'Match');
+    } else {
+      await encodeGroup(clipGroups, allClipDataMaps, !disableScoreboard, 11, 82, 'Clip');
     }
 
     if (cancelExport) return;
@@ -826,26 +901,34 @@ async function doWebCodecsExport() {
       // (within the ±0.002 s filter) get outTs values that overshoot the base for
       // the next clip, causing the muxer to see a backward DTS at the boundary.
       let lastAudioTs = -1;
-      for (const clip of exportClips) {
-        const clipAudio = audioSamples.filter(s => {
-          const t = s.cts / (s.timescale || aTs);
-          return t >= clip.start - 0.002 && t <= clip.end + 0.002;
-        });
-        for (const s of clipAudio) {
-          const t = s.cts / (s.timescale || aTs);
-          const rawOutTs = Math.max(0, Math.round(((t - clip.start) + audioCumulative) * 1_000_000));
-          const outTs = lastAudioTs >= 0 && rawOutTs <= lastAudioTs
-            ? lastAudioTs + 1
-            : rawOutTs;
-          if (outTs !== rawOutTs) {
-            console.log(`[WC] audio outTs clamped at clip boundary: raw=${rawOutTs} → ${outTs}`);
+      const muxClipAudio = (clipsToMux) => {
+        for (const clip of clipsToMux) {
+          const clipAudio = audioSamples.filter(s => {
+            const t = s.cts / (s.timescale || aTs);
+            return t >= clip.start - 0.002 && t <= clip.end + 0.002;
+          });
+          for (const s of clipAudio) {
+            const t = s.cts / (s.timescale || aTs);
+            const rawOutTs = Math.max(0, Math.round(((t - clip.start) + audioCumulative) * 1_000_000));
+            const outTs = lastAudioTs >= 0 && rawOutTs <= lastAudioTs
+              ? lastAudioTs + 1
+              : rawOutTs;
+            if (outTs !== rawOutTs) {
+              console.log(`[WC] audio outTs clamped at clip boundary: raw=${rawOutTs} → ${outTs}`);
+            }
+            lastAudioTs = outTs;
+            // duration: how long this audio frame lasts, in microseconds.
+            const outDur = Math.max(1, Math.round(s.duration * 1_000_000 / (s.timescale || aTs)));
+            muxer.addAudioChunkRaw(audioDataMap.get(s.offset), 'key', outTs, outDur, null);
           }
-          lastAudioTs = outTs;
-          // duration: how long this audio frame lasts, in microseconds.
-          const outDur = Math.max(1, Math.round(s.duration * 1_000_000 / (s.timescale || aTs)));
-          muxer.addAudioChunkRaw(audioDataMap.get(s.offset), 'key', outTs, outDur, null);
+          audioCumulative += clip.end - clip.start;
         }
-        audioCumulative += clip.end - clip.start;
+      };
+      if (exportCombined) {
+        muxClipAudio(highlightClips); // pass 1 audio (highlights only)
+        muxClipAudio(exportClips);    // pass 2 audio (all clips, timestamps continue)
+      } else {
+        muxClipAudio(exportClips);
       }
     }
 
@@ -859,14 +942,15 @@ async function doWebCodecsExport() {
     await wcYield();
     muxer.finalize();
 
-    const outBuffer = muxer.target.buffer;
-    console.log(`[WC] muxer buffer byteLength: ${outBuffer.byteLength} (${(outBuffer.byteLength / 1024).toFixed(1)} KB)`);
-    const blob = new Blob([outBuffer], { type: 'video/mp4' });
+    const blob = isAndroid
+      ? new Blob(outputChunks, { type: 'video/mp4' })
+      : new Blob([muxer.target.buffer], { type: 'video/mp4' });
+    console.log(`[WC] blob size: ${blob.size} bytes (${(blob.size / 1024).toFixed(1)} KB)${isAndroid ? `, chunks: ${outputChunks.length}` : ''}`);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `gamepointla_${homeLabel}_${awayLabel}_${date}.mp4`;
+    a.download = `gamepointla_${homeLabel}_${awayLabel}_${date}${exportCombined ? '_combined' : ''}.mp4`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -876,12 +960,15 @@ async function doWebCodecsExport() {
     // make the download fail. 30 s is generous enough for any browser to start.
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
 
-    setProgress(100, `✓ Exported — ${wcFmtSize(outBuffer.byteLength)}`,
-      `${framesEncoded} frames · ${exportClips.length} clip${exportClips.length !== 1 ? 's' : ''}`);
+    const totalClipCount = exportCombined
+      ? highlightClips.length + exportClips.length
+      : exportClips.length;
+    setProgress(100, `✓ Exported — ${wcFmtSize(blob.size)}`,
+      `${framesEncoded} frames · ${totalClipCount} clip${totalClipCount !== 1 ? 's' : ''}`);
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Done'; cancelBtn.onclick = () => openExport(); }
     $('exp-bar').style.background = 'var(--serve)';
-    toast('Export complete ✓');
+    toast(exportCombined ? 'Combined export complete ✓' : 'Export complete ✓');
 
   } catch (err) {
     trackEvent('webcodecs_error', { message: err.message });
@@ -1074,7 +1161,7 @@ async function doMediaRecorderExport() {
           ctx.drawImage(vid, 0, 0, width, height);
           if (!disableScoreboard) {
             const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
           }
           if (!disableWatermark) wcDrawWatermark(ctx, width, height, watermarkLogo);
           maybeResume();
@@ -1087,7 +1174,7 @@ async function doMediaRecorderExport() {
           ctx.drawImage(vid, 0, 0, width, height);
           if (!disableScoreboard) {
             const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
           }
           if (!disableWatermark) wcDrawWatermark(ctx, width, height, watermarkLogo);
           maybeResume();
@@ -1222,6 +1309,69 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
   ctx.fillStyle = '#ff8a80';
   ctx.textAlign = 'right';
   ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY);
+}
+
+function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vPos = 'top', hPos = 'left') {
+  const rowH    = Math.max(22, Math.round(h * 0.052));
+  const boxW    = Math.round(w * 0.24);
+  const boxH    = rowH * 2;
+  const margin  = Math.round(w * 0.022);
+  const bx = hPos === 'right'  ? w - margin - boxW
+           : hPos === 'center' ? Math.round((w - boxW) / 2)
+           :                     margin;
+  const by = vPos === 'bottom' ? Math.round(h - margin * 0.8 - boxH)
+           :                     Math.round(h * 0.03);
+  const accentW = Math.round(rowH * 0.22);
+  const pad     = Math.round(rowH * 0.28);
+  const fontSize = Math.round(rowH * 0.54);
+
+  ctx.shadowColor   = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur    = Math.round(rowH * 0.4);
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 0;
+
+  ctx.fillStyle = 'rgba(10,10,10,0.88)';
+  ctx.fillRect(bx, by, boxW, boxH);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#1A73E8';
+  ctx.fillRect(bx, by, accentW, rowH);
+  ctx.fillStyle = '#D32F2F';
+  ctx.fillRect(bx, by + rowH, accentW, rowH);
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(bx, by + rowH, boxW, 1);
+
+  ctx.font = `700 ${fontSize}px "Arial Narrow", Arial, sans-serif`;
+  ctx.textBaseline = 'middle';
+  const textX  = bx + accentW + pad;
+  const scoreX = bx + boxW - pad;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.fillText(homeTeam.toUpperCase().slice(0, 10), textX, by + rowH / 2);
+  ctx.fillStyle = '#7eb3ff';
+  ctx.textAlign = 'right';
+  ctx.fillText(homeScore, scoreX, by + rowH / 2);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.fillText(awayTeam.toUpperCase().slice(0, 10), textX, by + rowH + rowH / 2);
+  ctx.fillStyle = '#ff8a80';
+  ctx.textAlign = 'right';
+  ctx.fillText(awayScore, scoreX, by + rowH + rowH / 2);
+
+  ctx.shadowColor = 'transparent';
+}
+
+function wcDrawActiveScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, style, vPos, hPos) {
+  const s  = style ?? exportScoreboardStyle;
+  const vp = vPos  ?? exportScoreboardPosition.v;
+  const hp = hPos  ?? exportScoreboardPosition.h;
+  if (s === 'box') {
+    wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vp, hp);
+  } else {
+    wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore);
+  }
 }
 
 // Scan the file's top-level box headers (8 bytes each) to locate moov without
