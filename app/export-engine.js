@@ -9,6 +9,7 @@ async function doWebCodecsExport() {
   // the browser's high-level video element. Only available in Chrome/Edge.
   if (!('VideoEncoder' in window) || !('VideoDecoder' in window)) {
     toast('WebCodecs not supported — use Chrome or Edge');
+    trackEvent('browser_unsupported', { message: 'WebCodecs not supported' });
     return;
   }
   // Only export clips that are fully bounded (have both a start AND end time).
@@ -883,6 +884,7 @@ async function doWebCodecsExport() {
     toast('Export complete ✓');
 
   } catch (err) {
+    trackEvent('webcodecs_error', { message: err.message });
     console.error('[WC] export failed —', err.name, err.message);
     console.error('[WC] stack:', err.stack);
     const lbl = $('exp-status');
@@ -1156,6 +1158,7 @@ async function doMediaRecorderExport() {
     toast('Export complete ✓');
 
   } catch (err) {
+    trackEvent('mediarecorder_error', { message: err.message });
     document.removeEventListener('visibilitychange', onVisibilityChange);
     try { URL.revokeObjectURL(vid.src); document.body.removeChild(vid); } catch (_) {}
     console.error('MediaRecorder export error:', err);
