@@ -3,6 +3,7 @@ node_modules
 tests
 .wrangler
 worker
+functions
 trace.txt
 package.json
 package-lock.json

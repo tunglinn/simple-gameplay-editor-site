@@ -2,7 +2,7 @@
   "name": "gamepointla",
   "private": true,
   "scripts": {
-    "dev":        "wrangler dev --persist-to ../wrangler-state",
+    "dev":        "wrangler pages dev . --persist-to ../wrangler-state",
     "db":         "wrangler d1 execute gamepointla-analytics --local --persist-to ../wrangler-state --command",
     "test":       "vitest run",
     "test:watch": "vitest",

@@ -1,73 +1,34 @@
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
+export async function onRequestGet({ env }) {
+  const [summary, byCountry, recent] = await Promise.all([
+    env.DB.prepare(
+      `SELECT event, message, COUNT(*) as count
+       FROM events
+       GROUP BY event, message
+       ORDER BY count DESC`
+    ).all(),
+    env.DB.prepare(
+      `SELECT country, COUNT(*) as count
+       FROM events
+       WHERE event = 'page_view'
+       GROUP BY country
+       ORDER BY count DESC
+       LIMIT 20`
+    ).all(),
+    env.DB.prepare(
+      `SELECT event, message, browser, url, country, city, ts
+       FROM events
+       ORDER BY ts DESC
+       LIMIT 50`
+    ).all(),
+  ]);
 
-    if (request.method === 'POST' && url.pathname === '/track') {
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return new Response('Bad JSON', { status: 400 });
-      }
-
-      const { event, message, browser, pageUrl } = body;
-      if (!event) return new Response('Missing event', { status: 400 });
-
-      const country = request.cf?.country ?? null;
-      const city    = request.cf?.city    ?? null;
-
-      await env.DB.prepare(
-        'INSERT INTO events (event, message, browser, url, country, city) VALUES (?, ?, ?, ?, ?, ?)'
-      ).bind(
-        String(event).slice(0, 100),
-        message ? String(message).slice(0, 500) : null,
-        browser ? String(browser).slice(0, 200) : null,
-        pageUrl ? String(pageUrl).slice(0, 500) : null,
-        country,
-        city
-      ).run();
-
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (request.method === 'GET' && url.pathname === '/admin') {
-      const [summary, byCountry, recent] = await Promise.all([
-        env.DB.prepare(
-          `SELECT event, message, COUNT(*) as count
-           FROM events
-           GROUP BY event, message
-           ORDER BY count DESC`
-        ).all(),
-        env.DB.prepare(
-          `SELECT country, COUNT(*) as count
-           FROM events
-           WHERE event = 'page_view'
-           GROUP BY country
-           ORDER BY count DESC
-           LIMIT 20`
-        ).all(),
-        env.DB.prepare(
-          `SELECT event, message, browser, url, country, city, ts
-           FROM events
-           ORDER BY ts DESC
-           LIMIT 50`
-        ).all(),
-      ]);
-
-      const html = buildAdminHtml(summary.results, byCountry.results, recent.results);
-      return new Response(html, {
-        headers: { 'Content-Type': 'text/html;charset=UTF-8' },
-      });
-    }
-
-    return env.ASSETS.fetch(request);
-  },
-};
+  const html = buildAdminHtml(summary.results, byCountry.results, recent.results);
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+  });
+}
 
 function buildAdminHtml(summary, byCountry, recent) {
-  const pageViews = recent.filter(r => r.event === 'page_view').length;
   const totalViews = summary.find(r => r.event === 'page_view')?.count ?? 0;
 
   const summaryRows = summary.map(r => `
@@ -106,7 +67,6 @@ function buildAdminHtml(summary, byCountry, recent) {
     th { text-align: left; border-bottom: 2px solid #ddd; padding: 6px 10px; }
     td { border-bottom: 1px solid #eee; padding: 6px 10px; vertical-align: top; word-break: break-word; }
     tr:hover td { background: #f9f9f9; }
-    .count { font-weight: 600; color: #c0392b; }
     .empty { color: #888; font-style: italic; padding: 12px 0; }
   </style>
 </head>
