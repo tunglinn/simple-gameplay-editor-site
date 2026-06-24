@@ -4,5 +4,7 @@ CREATE TABLE IF NOT EXISTS events (
   message   TEXT,
   browser   TEXT,
   url       TEXT,
+  country   TEXT,
+  city      TEXT,
   ts        TEXT    NOT NULL DEFAULT (datetime('now'))
 );

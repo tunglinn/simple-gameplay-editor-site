@@ -1,0 +1,2 @@
+ALTER TABLE events ADD COLUMN country TEXT;
+ALTER TABLE events ADD COLUMN city TEXT;

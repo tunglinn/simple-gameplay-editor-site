@@ -13,13 +13,18 @@ export default {
       const { event, message, browser, pageUrl } = body;
       if (!event) return new Response('Missing event', { status: 400 });
 
+      const country = request.cf?.country ?? null;
+      const city    = request.cf?.city    ?? null;
+
       await env.DB.prepare(
-        'INSERT INTO events (event, message, browser, url) VALUES (?, ?, ?, ?)'
+        'INSERT INTO events (event, message, browser, url, country, city) VALUES (?, ?, ?, ?, ?, ?)'
       ).bind(
         String(event).slice(0, 100),
         message ? String(message).slice(0, 500) : null,
         browser ? String(browser).slice(0, 200) : null,
-        pageUrl ? String(pageUrl).slice(0, 500) : null
+        pageUrl ? String(pageUrl).slice(0, 500) : null,
+        country,
+        city
       ).run();
 
       return new Response(JSON.stringify({ ok: true }), {
@@ -28,7 +33,7 @@ export default {
     }
 
     if (request.method === 'GET' && url.pathname === '/admin') {
-      const [summary, recent] = await Promise.all([
+      const [summary, byCountry, recent] = await Promise.all([
         env.DB.prepare(
           `SELECT event, message, COUNT(*) as count
            FROM events
@@ -36,14 +41,22 @@ export default {
            ORDER BY count DESC`
         ).all(),
         env.DB.prepare(
-          `SELECT event, message, browser, url, ts
+          `SELECT country, COUNT(*) as count
+           FROM events
+           WHERE event = 'page_view'
+           GROUP BY country
+           ORDER BY count DESC
+           LIMIT 20`
+        ).all(),
+        env.DB.prepare(
+          `SELECT event, message, browser, url, country, city, ts
            FROM events
            ORDER BY ts DESC
            LIMIT 50`
         ).all(),
       ]);
 
-      const html = buildAdminHtml(summary.results, recent.results);
+      const html = buildAdminHtml(summary.results, byCountry.results, recent.results);
       return new Response(html, {
         headers: { 'Content-Type': 'text/html;charset=UTF-8' },
       });
@@ -53,11 +66,20 @@ export default {
   },
 };
 
-function buildAdminHtml(summary, recent) {
+function buildAdminHtml(summary, byCountry, recent) {
+  const pageViews = recent.filter(r => r.event === 'page_view').length;
+  const totalViews = summary.find(r => r.event === 'page_view')?.count ?? 0;
+
   const summaryRows = summary.map(r => `
     <tr>
       <td>${esc(r.event)}</td>
       <td>${esc(r.message ?? '—')}</td>
+      <td>${r.count}</td>
+    </tr>`).join('');
+
+  const countryRows = byCountry.map(r => `
+    <tr>
+      <td>${esc(r.country ?? '—')}</td>
       <td>${r.count}</td>
     </tr>`).join('');
 
@@ -67,6 +89,7 @@ function buildAdminHtml(summary, recent) {
       <td>${esc(r.event)}</td>
       <td>${esc(r.message ?? '—')}</td>
       <td title="${esc(r.browser ?? '')}">${esc(shortBrowser(r.browser))}</td>
+      <td>${esc(r.city ?? '—')}, ${esc(r.country ?? '—')}</td>
     </tr>`).join('');
 
   return `<!DOCTYPE html>
@@ -89,9 +112,15 @@ function buildAdminHtml(summary, recent) {
 </head>
 <body>
   <h1>GamePointLA Analytics</h1>
-  <p style="color:#888;font-size:.85rem">All times UTC</p>
+  <p style="color:#888;font-size:.85rem">All times UTC &nbsp;·&nbsp; <strong>${totalViews}</strong> total page views</p>
 
-  <h2>Error summary</h2>
+  <h2>Page views by country</h2>
+  <table>
+    <thead><tr><th>Country</th><th>Views</th></tr></thead>
+    <tbody>${countryRows || '<tr><td colspan="2" class="empty">No page views yet</td></tr>'}</tbody>
+  </table>
+
+  <h2>Event summary</h2>
   <table>
     <thead><tr><th>Event</th><th>Message</th><th>Count</th></tr></thead>
     <tbody>${summaryRows || '<tr><td colspan="3" class="empty">No events yet</td></tr>'}</tbody>
@@ -99,8 +128,8 @@ function buildAdminHtml(summary, recent) {
 
   <h2>Recent events (last 50)</h2>
   <table>
-    <thead><tr><th>Time</th><th>Event</th><th>Message</th><th>Browser</th></tr></thead>
-    <tbody>${recentRows || '<tr><td colspan="4" class="empty">No events yet</td></tr>'}</tbody>
+    <thead><tr><th>Time</th><th>Event</th><th>Message</th><th>Browser</th><th>Location</th></tr></thead>
+    <tbody>${recentRows || '<tr><td colspan="5" class="empty">No events yet</td></tr>'}</tbody>
   </table>
 </body>
 </html>`;
