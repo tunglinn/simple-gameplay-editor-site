@@ -135,7 +135,7 @@ async function doWebCodecsExport() {
     const clipCountLabel = exportCombined
       ? `${highlightClips.length}+${exportClips.length}`
       : String(exportClips.length);
-    setProgress(11, 'Preparing…', `${outW}×${outH} · ${fps} fps · ${clipCountLabel} clips`);
+    setProgress(6, 'Preparing…', `${outW}×${outH} · ${fps} fps · ${clipCountLabel} clips`);
     await wcYield();
 
     // For each clip, collect the set of compressed video samples that cover it.
@@ -610,6 +610,12 @@ async function doWebCodecsExport() {
             }
             vf.close(); // Release GPU/memory immediately; encoder has its own copy.
             framesEncoded++;
+            {
+              const pct = progressBase + Math.round(((framesEncoded - framesAtGroupStart) / groupTotalFrames) * progressRange);
+              setProgress(pct,
+                `Encoding frame ${framesEncoded - framesAtGroupStart} / ${groupTotalFrames}`,
+                `${passLabel} ${ci + 1} / ${groupGroups.length}`);
+            }
             // Encoder backpressure: on Android the hardware encoder (MediaCodec)
             // and decoder share the same resource pool. If we let the encoder queue
             // grow unbounded (~132 frames), the decoder cannot complete flush() and
@@ -760,10 +766,6 @@ async function doWebCodecsExport() {
           if ((si + 1) % 50 === 0) {
             await wcYield();
             console.log(`[WC] ${passLabel} clip ${ci} sample ${si}: framesDecoded=${framesDecodedThisClip} framesEncoded=${framesEncoded} decoderState=${decoder.state} decodeQ=${decoder.decodeQueueSize} encodeQ=${encoder.encodeQueueSize}`);
-            const pct = progressBase + Math.round(((framesEncoded - framesAtGroupStart) / groupTotalFrames) * progressRange);
-            setProgress(pct,
-              `Encoding frame ${framesEncoded - framesAtGroupStart} / ${groupTotalFrames}`,
-              `${passLabel} ${ci + 1} / ${groupGroups.length}`);
           }
         }
         console.log(`[WC] ${passLabel} clip ${ci} decode loop done: samplesSent=${samplesSent}, decoderState=${decoder.state}`);
