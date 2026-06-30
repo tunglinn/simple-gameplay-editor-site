@@ -1297,10 +1297,11 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
   ctx.font = `800 ${fontSize}px "Arial Narrow", Arial, sans-serif`;
   ctx.textBaseline = 'middle';
   const midY = y + barH / 2;
+  const maxSideW = Math.round(w / 2 - pad - pad);
 
   ctx.fillStyle = '#7eb3ff';
   ctx.textAlign = 'left';
-  ctx.fillText(`${homeTeam.toUpperCase()}  ${homeScore}`, pad, midY);
+  ctx.fillText(`${homeTeam.toUpperCase()}  ${homeScore}`, pad, midY, maxSideW);
 
   ctx.fillStyle = 'rgba(255,255,255,0.3)';
   ctx.textAlign = 'center';
@@ -1308,22 +1309,32 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
 
   ctx.fillStyle = '#ff8a80';
   ctx.textAlign = 'right';
-  ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY);
+  ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY, maxSideW);
 }
 
 function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vPos = 'top', hPos = 'left') {
-  const rowH    = Math.max(22, Math.round(h * 0.052));
-  const boxW    = Math.round(w * 0.24);
+  const rowH     = Math.max(22, Math.round(h * 0.052));
+  const margin   = Math.round(w * 0.022);
+  const accentW  = Math.round(rowH * 0.22);
+  const pad      = Math.round(rowH * 0.28);
+  const fontSize = Math.round(rowH * 0.54);
+
+  ctx.font = `700 ${fontSize}px "Arial Narrow", Arial, sans-serif`;
+
+  const homeText  = homeTeam.toUpperCase();
+  const awayText  = awayTeam.toUpperCase();
+  const maxNameW  = Math.max(ctx.measureText(homeText).width, ctx.measureText(awayText).width);
+  const maxScoreW = Math.max(ctx.measureText(String(homeScore)).width, ctx.measureText(String(awayScore)).width);
+
+  const minBoxW = Math.round(w * 0.24);
+  const boxW    = Math.max(minBoxW, Math.ceil(accentW + pad + maxNameW + pad + maxScoreW + pad));
   const boxH    = rowH * 2;
-  const margin  = Math.round(w * 0.022);
+
   const bx = hPos === 'right'  ? w - margin - boxW
            : hPos === 'center' ? Math.round((w - boxW) / 2)
            :                     margin;
   const by = vPos === 'bottom' ? Math.round(h - margin * 0.8 - boxH)
            :                     Math.round(h * 0.03);
-  const accentW = Math.round(rowH * 0.22);
-  const pad     = Math.round(rowH * 0.28);
-  const fontSize = Math.round(rowH * 0.54);
 
   ctx.shadowColor   = 'rgba(0,0,0,0.6)';
   ctx.shadowBlur    = Math.round(rowH * 0.4);
@@ -1341,21 +1352,20 @@ function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore
   ctx.fillStyle = 'rgba(255,255,255,0.10)';
   ctx.fillRect(bx, by + rowH, boxW, 1);
 
-  ctx.font = `700 ${fontSize}px "Arial Narrow", Arial, sans-serif`;
   ctx.textBaseline = 'middle';
   const textX  = bx + accentW + pad;
   const scoreX = bx + boxW - pad;
 
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
-  ctx.fillText(homeTeam.toUpperCase().slice(0, 10), textX, by + rowH / 2);
+  ctx.fillText(homeText, textX, by + rowH / 2);
   ctx.fillStyle = '#7eb3ff';
   ctx.textAlign = 'right';
   ctx.fillText(homeScore, scoreX, by + rowH / 2);
 
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
-  ctx.fillText(awayTeam.toUpperCase().slice(0, 10), textX, by + rowH + rowH / 2);
+  ctx.fillText(awayText, textX, by + rowH + rowH / 2);
   ctx.fillStyle = '#ff8a80';
   ctx.textAlign = 'right';
   ctx.fillText(awayScore, scoreX, by + rowH + rowH / 2);

@@ -497,7 +497,8 @@
       background: var(--text); border-radius: var(--radius);
       padding: 8px 16px; color: #fff; text-align: center;
     }
-    .sb-heads { display: flex; justify-content: space-between; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 2px; }
+    .sb-heads { display: flex; justify-content: space-between; gap: 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 2px; }
+    .sb-heads span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 48%; }
     .sb-score { font-family: 'Barlow Condensed', sans-serif; font-size: 40px; font-weight: 900; line-height: 1; letter-spacing: -2px; }
     .sb-score .sh { color: #82b4ff; }
     .sb-score .sa { color: #ff8a80; }
