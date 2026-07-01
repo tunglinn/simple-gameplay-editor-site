@@ -61,9 +61,9 @@ async function doWebCodecsExport() {
     // mp4-muxer is a pure-JS library that does this entirely in the browser.
     let Muxer, ArrayBufferTarget;
     try {
-      ({ Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm'));
+      ({ Muxer, ArrayBufferTarget } = await import('./lib/mp4-muxer.js'));
     } catch {
-      throw new Error('Could not load mp4-muxer. Check your internet connection.');
+      throw new Error('Could not load mp4-muxer.');
     }
     if (cancelExport) return;
 
