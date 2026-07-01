@@ -1,10 +1,11 @@
 // GamePointLa Service Worker
-const CACHE = 'gamepointla-v2';
+const CACHE = 'gamepointla-v3';
 const ASSETS = [
   './',
   './index.html',
   '/app',
   './manifest.webmanifest',
+  '/app/lib/mp4-muxer.js',
 ];
 
 self.addEventListener('install', e => {
