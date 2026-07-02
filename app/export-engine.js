@@ -9,6 +9,7 @@ async function doWebCodecsExport() {
   // the browser's high-level video element. Only available in Chrome/Edge.
   if (!('VideoEncoder' in window) || !('VideoDecoder' in window)) {
     toast('WebCodecs not supported — use Chrome or Edge');
+    trackEvent('browser_unsupported', { message: 'WebCodecs not supported' });
     return;
   }
   // Combined export uses two passes: highlighted clips with no scoreboard, then
@@ -64,9 +65,9 @@ async function doWebCodecsExport() {
     // mp4-muxer is a pure-JS library that does this entirely in the browser.
     let Muxer, StreamTarget, ArrayBufferTarget;
     try {
-      ({ Muxer, StreamTarget, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm'));
+      ({ Muxer, StreamTarget, ArrayBufferTarget } = await import('./lib/mp4-muxer.js'));
     } catch {
-      throw new Error('Could not load mp4-muxer. Check your internet connection.');
+      throw new Error('Could not load mp4-muxer.');
     }
     if (cancelExport) return;
 
@@ -975,6 +976,7 @@ async function doWebCodecsExport() {
     toast(exportCombined ? 'Combined export complete ✓' : 'Export complete ✓');
 
   } catch (err) {
+    trackEvent('webcodecs_error', { message: err.message });
     console.error('[WC] export failed —', err.name, err.message);
     console.error('[WC] stack:', err.stack);
     const lbl = $('exp-status');
@@ -1248,6 +1250,7 @@ async function doMediaRecorderExport() {
     toast('Export complete ✓');
 
   } catch (err) {
+    trackEvent('mediarecorder_error', { message: err.message });
     document.removeEventListener('visibilitychange', onVisibilityChange);
     try { URL.revokeObjectURL(vid.src); document.body.removeChild(vid); } catch (_) {}
     console.error('MediaRecorder export error:', err);

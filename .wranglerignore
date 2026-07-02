@@ -1,3 +1,12 @@
 node_modules
 .git
 tests
+.wrangler
+worker
+functions
+trace.txt
+package.json
+package-lock.json
+vitest.config.js
+playwright.config.js
+wrangler.jsonc
