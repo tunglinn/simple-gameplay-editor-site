@@ -644,6 +644,25 @@
       display: flex; background: var(--surface); border-radius: var(--radius-sm);
       border: 1.5px solid var(--border); padding: 3px; gap: 3px;
     }
+    .sb-pos-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr);
+      background: var(--surface); border-radius: var(--radius-sm);
+      border: 1.5px solid var(--border); padding: 3px; gap: 3px;
+    }
+    .sb-pos-grid .eng-btn {
+      padding: 4px; height: 24px; display: flex;
+    }
+    .sb-pos-grid .eng-btn::after {
+      content: ''; width: 5px; height: 5px; border-radius: 50%;
+      background: var(--text3); flex-shrink: 0;
+    }
+    .sb-pos-grid .eng-btn.active::after { background: var(--text); }
+    .sb-pos-grid .eng-btn[id$="tl"] { align-items: flex-start; justify-content: flex-start; }
+    .sb-pos-grid .eng-btn[id$="tc"] { align-items: flex-start; justify-content: center; }
+    .sb-pos-grid .eng-btn[id$="tr"] { align-items: flex-start; justify-content: flex-end; }
+    .sb-pos-grid .eng-btn[id$="bl"] { align-items: flex-end;   justify-content: flex-start; }
+    .sb-pos-grid .eng-btn[id$="bc"] { align-items: flex-end;   justify-content: center; }
+    .sb-pos-grid .eng-btn[id$="br"] { align-items: flex-end;   justify-content: flex-end; }
     .eng-btn {
       flex: 1; padding: 7px; border-radius: 7px; border: none;
       font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 800;

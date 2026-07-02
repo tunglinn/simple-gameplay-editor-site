@@ -580,14 +580,12 @@ function selectScoreboardStyle(style) {
   drawPreview();
 }
 
-function selectScoreboardPosition(axis, value) {
-  exportScoreboardPosition[axis] = value;
-  const ids = axis === 'v'
-    ? { top: 'sb-pos-top', bottom: 'sb-pos-bottom' }
-    : { left: 'sb-pos-left', center: 'sb-pos-center', right: 'sb-pos-right' };
-  Object.entries(ids).forEach(([k, id]) => {
-    const btn = $(id);
-    if (btn) btn.classList.toggle('active', k === value);
+function selectScoreboardPosition(v, h) {
+  exportScoreboardPosition = { v, h };
+  ['tl','tc','tr','bl','bc','br'].forEach(id => {
+    const btn = $('sb-pos-' + id);
+    if (btn) btn.classList.toggle('active',
+      id === (v[0] + h[0]));
   });
   drawPreview();
 }
@@ -636,15 +634,15 @@ function drawPreview() {
     ctx.fillText('NO VIDEO LOADED', cW / 2, cH / 2);
   }
 
+  const _previewLogo = (!exportDisableWatermark && _watermarkImg.complete && _watermarkImg.naturalWidth) ? _watermarkImg : null;
   if (!exportDisableScoreboard) {
     const homeLabel = $('inp-home').value || 'Home';
     const awayLabel = $('inp-away').value || 'Away';
     const homeScore = clips.filter(c => c.type === 'home_point').length;
     const awayScore = clips.filter(c => c.type === 'away_point').length;
-    wcDrawActiveScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore);
-  }
-  if (!exportDisableWatermark) {
-    wcDrawWatermark(ctx, cW, cH, _watermarkImg.complete && _watermarkImg.naturalWidth ? _watermarkImg : null);
+    wcDrawActiveScoreboard(ctx, cW, cH, homeLabel, awayLabel, homeScore, awayScore, undefined, undefined, undefined, _previewLogo);
+  } else if (_previewLogo) {
+    wcDrawWatermark(ctx, cW, cH, _previewLogo);
   }
 }
 
@@ -726,14 +724,12 @@ function openExport() {
 
     <div class="export-settings-col" id="sb-position-wrap" style="${exportScoreboardStyle !== 'box' ? 'display:none' : ''}">
       <div class="eng-label">Position</div>
-      <div class="engine-toggle" style="margin-bottom:4px">
-        <button class="eng-btn ${exportScoreboardPosition.v === 'top'    ? 'active' : ''}" id="sb-pos-top"    onclick="selectScoreboardPosition('v','top')">Top</button>
-        <button class="eng-btn ${exportScoreboardPosition.v === 'bottom' ? 'active' : ''}" id="sb-pos-bottom" onclick="selectScoreboardPosition('v','bottom')">Bottom</button>
-      </div>
-      <div class="engine-toggle">
-        <button class="eng-btn ${exportScoreboardPosition.h === 'left'   ? 'active' : ''}" id="sb-pos-left"   onclick="selectScoreboardPosition('h','left')">Left</button>
-        <button class="eng-btn ${exportScoreboardPosition.h === 'center' ? 'active' : ''}" id="sb-pos-center" onclick="selectScoreboardPosition('h','center')">Center</button>
-        <button class="eng-btn ${exportScoreboardPosition.h === 'right'  ? 'active' : ''}" id="sb-pos-right"  onclick="selectScoreboardPosition('h','right')">Right</button>
+      <div class="sb-pos-grid">
+        ${[['top','left'],['top','center'],['top','right'],['bottom','left'],['bottom','center'],['bottom','right']].map(([v,h]) => {
+          const id = v[0] + h[0];
+          const active = exportScoreboardPosition.v === v && exportScoreboardPosition.h === h ? 'active' : '';
+          return `<button class="eng-btn ${active}" id="sb-pos-${id}" onclick="selectScoreboardPosition('${v}','${h}')"></button>`;
+        }).join('')}
       </div>
     </div>
 

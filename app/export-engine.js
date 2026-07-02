@@ -33,7 +33,12 @@ async function doWebCodecsExport() {
 
   const scoreboardStyle    = exportScoreboardStyle;
   const scoreboardPosition = { ...exportScoreboardPosition };
-  const disableScoreboard = exportCombined ? false : exportDisableScoreboard;
+  const disableScoreboard  = exportCombined ? false : exportDisableScoreboard;
+  const disableWatermark   = exportDisableWatermark;
+  if (!disableWatermark && !_watermarkImg.complete) {
+    await new Promise(r => { _watermarkImg.onload = r; _watermarkImg.onerror = r; });
+  }
+  const watermarkLogo = (!disableWatermark && _watermarkImg.naturalWidth) ? _watermarkImg : null;
   cancelExport = false;
 
   $('export-body').innerHTML = `<div class="export-body">
@@ -584,7 +589,9 @@ async function doWebCodecsExport() {
 
             if (showScoreboard) {
               const { h, a } = wcScoreAt(ctsSec);
-              wcDrawActiveScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h);
+              wcDrawActiveScoreboard(ctx, outW, outH, homeLabel, awayLabel, h, a, scoreboardStyle, scoreboardPosition.v, scoreboardPosition.h, watermarkLogo);
+            } else if (watermarkLogo) {
+              wcDrawWatermark(ctx, outW, outH, watermarkLogo);
             }
 
             // Wrap the canvas pixels in a VideoFrame for the encoder.
@@ -1166,9 +1173,10 @@ async function doMediaRecorderExport() {
           ctx.drawImage(vid, 0, 0, width, height);
           if (!disableScoreboard) {
             const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a, undefined, undefined, undefined, watermarkLogo);
+          } else if (watermarkLogo) {
+            wcDrawWatermark(ctx, width, height, watermarkLogo);
           }
-          if (!disableWatermark) wcDrawWatermark(ctx, width, height, watermarkLogo);
           maybeResume();
           vid.requestVideoFrameCallback(drawFrame);
         };
@@ -1179,9 +1187,10 @@ async function doMediaRecorderExport() {
           ctx.drawImage(vid, 0, 0, width, height);
           if (!disableScoreboard) {
             const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a);
+            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a, undefined, undefined, undefined, watermarkLogo);
+          } else if (watermarkLogo) {
+            wcDrawWatermark(ctx, width, height, watermarkLogo);
           }
-          if (!disableWatermark) wcDrawWatermark(ctx, width, height, watermarkLogo);
           maybeResume();
           requestAnimationFrame(drawLoop);
         };
@@ -1317,7 +1326,7 @@ function wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore) {
   ctx.fillText(`${awayScore}  ${awayTeam.toUpperCase()}`, w - pad, midY, maxSideW);
 }
 
-function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vPos = 'top', hPos = 'left') {
+function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vPos = 'top', hPos = 'left', logoImg = null) {
   const rowH     = Math.max(22, Math.round(h * 0.052));
   const margin   = Math.round(w * 0.022);
   const accentW  = Math.round(rowH * 0.22);
@@ -1331,15 +1340,19 @@ function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore
   const maxNameW  = Math.max(ctx.measureText(homeText).width, ctx.measureText(awayText).width);
   const maxScoreW = Math.max(ctx.measureText(String(homeScore)).width, ctx.measureText(String(awayScore)).width);
 
-  const minBoxW = Math.round(w * 0.24);
-  const boxW    = Math.max(minBoxW, Math.ceil(accentW + pad + maxNameW + pad + maxScoreW + pad));
-  const boxH    = rowH * 2;
+  const minBoxW  = Math.round(w * 0.24);
+  const boxW     = Math.max(minBoxW, Math.ceil(accentW + pad + maxNameW + pad + maxScoreW + pad));
+  const boxH     = rowH * 2;
+  const iconSize = (logoImg && logoImg.naturalWidth) ? boxH : 0;
 
-  const bx = hPos === 'right'  ? w - margin - boxW
-           : hPos === 'center' ? Math.round((w - boxW) / 2)
-           :                     margin;
+  // Watermark sits between the scoreboard and the nearest screen edge, touching it.
+  // [icon][box] for left, [box][icon] for right, so the icon is always outermost.
+  const bx = hPos === 'right'  ? w - margin - iconSize - boxW
+           : hPos === 'center' ? Math.round((w - boxW - iconSize) / 2)
+           :                     margin + iconSize;
   const by = vPos === 'bottom' ? Math.round(h - margin * 0.8 - boxH)
            :                     Math.round(h * 0.03);
+  const iconX = hPos === 'left' ? bx - iconSize : bx + boxW;
 
   ctx.shadowColor   = 'rgba(0,0,0,0.6)';
   ctx.shadowBlur    = Math.round(rowH * 0.4);
@@ -1376,16 +1389,25 @@ function wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore
   ctx.fillText(awayScore, scoreX, by + rowH + rowH / 2);
 
   ctx.shadowColor = 'transparent';
+
+  if (iconSize) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur  = Math.round(iconSize * 0.3);
+    ctx.drawImage(logoImg, iconX, by, iconSize, iconSize);
+    ctx.restore();
+  }
 }
 
-function wcDrawActiveScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, style, vPos, hPos) {
+function wcDrawActiveScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, style, vPos, hPos, logoImg = null) {
   const s  = style ?? exportScoreboardStyle;
   const vp = vPos  ?? exportScoreboardPosition.v;
   const hp = hPos  ?? exportScoreboardPosition.h;
   if (s === 'box') {
-    wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vp, hp);
+    wcDrawScoreboardbox(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore, vp, hp, logoImg);
   } else {
     wcDrawScoreboard(ctx, w, h, homeTeam, awayTeam, homeScore, awayScore);
+    wcDrawWatermark(ctx, w, h, logoImg);
   }
 }
 
