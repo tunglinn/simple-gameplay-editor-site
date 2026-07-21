@@ -95,7 +95,11 @@
       background: #0a0a0a; position: relative; overflow: hidden;
     }
 
-    #main-video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; display: none; }
+    /* #shared-video is one <video> element reused for both the main preview and
+       the editor — it's reparented between #video-area and #editor-view (see
+       app.js) rather than duplicated, so these rules key off whichever
+       container currently holds it instead of a fixed ID. */
+    #video-area #shared-video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; display: none; }
 
     #placeholder {
       display: flex; flex-direction: column; align-items: center; gap: 16px;
@@ -151,7 +155,7 @@
     }
     #editor-view.open { visibility: visible; opacity: 1; }
 
-    #editor-video {
+    #editor-view #shared-video {
       position: absolute; inset: 0;
       width: 100%; height: 100%; object-fit: contain;
     }

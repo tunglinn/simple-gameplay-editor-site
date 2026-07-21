@@ -52,7 +52,7 @@
   </div>
 
   <div id="video-area">
-    <video id="main-video" playsinline preload="metadata"></video>
+    <video id="shared-video" playsinline preload="metadata"></video>
     <div id="placeholder">
       <div class="ph-ring">📂</div>
       <p>Open a Video</p>
@@ -89,7 +89,8 @@
 
 <!-- ══════ EDITOR VIEW ══════ -->
 <div id="editor-view">
-  <video id="editor-video" playsinline preload="none"></video>
+  <!-- #shared-video is moved here from #video-area when the editor opens — see
+       openEditor()/closeEditor() in app.js. -->
 
   <!-- Top bar -->
   <div id="ed-top">

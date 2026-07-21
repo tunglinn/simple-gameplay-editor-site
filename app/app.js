@@ -15,8 +15,18 @@ let retryExportAfterReopen = false;
 //  DOM
 // ════════════════════════════════════════════════════
 const $ = id => document.getElementById(id);
-const mainVideo   = $('main-video');
-const editorVideo = $('editor-video');
+// mainVideo/editorVideo both point at the same <video> element — it's moved
+// between #video-area and #editor-view (see openEditor/closeEditor) instead of
+// being duplicated, so there is only ever one hardware decoder in play. Two
+// separate <video> elements previously raced for Android's small fixed pool of
+// hardware decoder instances; if the main-view element grabbed the only slot,
+// the editor's element could sit at readyState 0 forever ("loads on the main
+// page, never loads in the editor tab"). Kept as two names since most of this
+// file, and the Playwright e2e test, refer to whichever one matches context.
+const mainVideo   = $('shared-video');
+const editorVideo = mainVideo;
+const videoArea   = $('video-area');
+const placeholder = $('placeholder');
 const fileInput   = $('file-input');
 const editorView  = $('editor-view');
 const recBar      = $('rec-bar');
@@ -52,18 +62,12 @@ fileInput.addEventListener('change', e => {
   if (videoSrc) URL.revokeObjectURL(videoSrc);
   videoSrc = URL.createObjectURL(file);
   videoFile = file;
+  // Picking a new file always happens from the main view, but make sure the
+  // shared element is anchored there even if it somehow got left in the editor.
+  videoArea.insertBefore(mainVideo, placeholder);
   mainVideo.src = videoSrc;
-  // Don't assign editorVideo.src here. On Android, pointing two <video> elements at
-  // the same file at the same time forces the browser to open two hardware codec
-  // pipelines simultaneously. Android devices expose only a small fixed pool of
-  // hardware decoder instances; competing for that pool causes one element to stall
-  // or freeze a few seconds into playback. Instead, editorVideo.src is assigned
-  // lazily the first time the editor is opened (see openEditor below), so only one
-  // decoder is ever active at a time.
-  editorVideo.removeAttribute('src');
-  editorVideo.load(); // resets readyState to HAVE_NOTHING, releasing any old decoder
   mainVideo.style.display = 'block';
-  $('placeholder').style.display = 'none';
+  placeholder.style.display = 'none';
   videoLoaded = true;
   fileInput.value = '';
   toast('Video loaded ✓');
@@ -104,37 +108,26 @@ mainVideo.addEventListener('pause', () => {
 function openEditor() {
   if (!videoLoaded) { toast('Open a video first'); return; }
   if (window._dbgZone) window._dbgZone.style.pointerEvents = 'none';
+  // Reparenting a <video> element preserves its decoder/currentTime/play state —
+  // unlike reassigning .src, this does not trigger a reload, so there's nothing
+  // to wait for and no playhead to resync.
+  editorView.insertBefore(mainVideo, editorView.firstChild);
   editorView.classList.add('open');
   updateScore();
   updateActionBtns();
   updateUndoRedo();
-
-  if (editorVideo.readyState < 1) {
-    // editorVideo has no src yet (first open, or after loading a new file).
-    // Assign the src now — only one decoder is running because mainVideo is
-    // paused while the editor is visible. Once the browser has parsed the file
-    // header (duration, dimensions, codec tables) it fires 'loadedmetadata',
-    // at which point we sync the playhead to wherever mainVideo was.
-    // { once: true } auto-removes the listener after it fires once.
-    editorVideo.src = videoSrc;
-    editorVideo.addEventListener('loadedmetadata', () => {
-      editorVideo.currentTime = mainVideo.currentTime;
-      vidProgress.max = editorVideo.duration || 100;
-      syncProgress();
-    }, { once: true });
-  } else {
-    // editorVideo already has the current video loaded — just sync the playhead.
-    editorVideo.currentTime = mainVideo.currentTime;
-    syncProgress();
-  }
+  syncProgress();
 }
 
+// Must match the #editor-view opacity transition duration in app.css so the
+// element doesn't visibly jump back to the main view mid-fade.
+const EDITOR_FADE_MS = 220;
+
 function closeEditor() {
-  editorVideo.pause();
-  mainVideo.currentTime = editorVideo.currentTime;
   if (window._dbgZone) window._dbgZone.style.pointerEvents = 'auto';
   editorView.classList.remove('open');
   updatePlayIcon();
+  setTimeout(() => videoArea.insertBefore(mainVideo, placeholder), EDITOR_FADE_MS);
 }
 
 // ════════════════════════════════════════════════════
@@ -965,7 +958,6 @@ function doReset() {
   closeResetModal();
 
   // Close any open views first
-  editorVideo.pause();
   mainVideo.pause();
   editorView.classList.remove('open');
   closeMarks();
@@ -984,12 +976,11 @@ function doReset() {
   videoFile = null;
   videoLoaded = false;
 
+  videoArea.insertBefore(mainVideo, placeholder);
   mainVideo.removeAttribute('src');
   mainVideo.load();
   mainVideo.style.display = 'none';
-  editorVideo.removeAttribute('src');
-  editorVideo.load();
-  $('placeholder').style.display = '';
+  placeholder.style.display = '';
 
   // Clear team names
   $('inp-home').value = '';
