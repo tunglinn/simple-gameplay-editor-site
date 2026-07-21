@@ -96,7 +96,7 @@ async function doWebCodecsExport() {
     // Verify file is still readable before starting the parse.
     // On Android, file-picker permissions can expire if the user backgrounded Chrome
     // between picking the file and tapping Export.
-    try { await videoFile.slice(0, 4).arrayBuffer(); }
+    try { await wcReadFileRangeWithRetry(videoFile, 0, 4); }
     catch { throw new Error('Video file is no longer accessible — re-select it and try again'); }
 
     setProgress(5, 'Parsing video file…', wcFmtSize(videoFile.size));
@@ -167,6 +167,21 @@ async function doWebCodecsExport() {
     const hlGroups   = exportCombined
       ? highlightClips.map(c => wcGetSamplesForClip(videoSamples, c, timescale))
       : null;
+
+    // Diagnostic: how far back does each clip's preroll reach to find a keyframe?
+    // If this grows large/unbounded, the per-clip fetch range balloons far beyond
+    // what the clip itself needs — see fetchClipData below.
+    const logPreroll = (groups, label) => groups.forEach((g, i) => {
+      if (!g.allSamples.length) return;
+      const s0 = g.allSamples[0];
+      const keyframeSec = s0.dts / (s0.timescale || timescale);
+      console.log(`[WC] ${label} ${i} preroll: clip=${g.clip.start.toFixed(2)}-${g.clip.end.toFixed(2)}s `
+        + `(${(g.clip.end - g.clip.start).toFixed(2)}s) keyframe@${keyframeSec.toFixed(2)}s `
+        + `(${(g.clip.start - keyframeSec).toFixed(2)}s back) samplesInRange=${g.allSamples.length}`);
+    });
+    logPreroll(clipGroups, 'clip');
+    if (hlGroups) logPreroll(hlGroups, 'hl clip');
+
     // frameSamples = samples within the clip's display window (used for progress only).
     // ⚠ WARNING: frameSamples has no upper-bound check in wcGetSamplesForClip,
     // so totalFrames is slightly overestimated — the progress bar won't reach 91%.
@@ -180,12 +195,34 @@ async function doWebCodecsExport() {
     const audioDataMap = new Map(); // offset → Uint8Array (audio sample bytes, all clips)
     const aTs = audioTrack?.timescale;
 
-    // Fetch the compressed bytes for one clip. One contiguous File.slice() per
-    // clip (a single range spanning all samples for that clip) avoids per-sample
-    // IPC overhead. The returned map's Uint8Array views hold the range buffer
-    // alive only until clipDataMap.clear() runs after the clip encodes.
+    // Fetch the compressed bytes for one clip: one File.slice() for its video
+    // samples, one for its audio samples — fetched as two SEPARATE ranges, not
+    // one range spanning both. On files where video and audio are interleaved
+    // chunk-by-chunk (the common case), a combined range is barely bigger than
+    // either stream alone, since same-time samples sit close together. But on
+    // files where each track's samples are laid out as one contiguous block
+    // (seen on real phone-recorded footage — audio block, then video block),
+    // video's byte offset for a given time can be ~2.5x audio's, so a combined
+    // range has to cross the entire gap between the two blocks: a clip needing
+    // 5MB of video + 2MB of audio was fetching 360+MB just to span the gap.
+    // That inflated read is also the likely cause of NotReadableError on
+    // Android — a read that size takes far longer, giving the content://
+    // provider much more time to hit its staleness issue mid-read.
+    // The returned map's Uint8Array views hold their range buffer alive only
+    // until clipDataMap.clear() runs after the clip encodes.
     // includeAudio: also copy this clip's audio bytes into audioDataMap (copied,
     // not viewed, so the range buffer can still be freed after the video decode).
+    const fetchStreamRange = async (samples) => {
+      if (!samples.length) return null;
+      let lo = samples[0].offset, hi = samples[0].offset + samples[0].size;
+      for (const s of samples) {
+        if (s.offset < lo) lo = s.offset;
+        if (s.offset + s.size > hi) hi = s.offset + s.size;
+      }
+      const buffer = await wcReadFileRangeWithRetry(videoFile, lo, hi);
+      return { buffer, lo };
+    };
+
     const fetchClipData = async (group, label, ci, includeAudio) => {
       const { clip, allSamples } = group;
       const clipDataMap = new Map();
@@ -198,24 +235,25 @@ async function doWebCodecsExport() {
           })
         : [];
 
-      // One range read covering both video and audio samples for this clip.
-      const allForRange = allSamples.length ? [...allSamples, ...clipAudio] : clipAudio;
-      if (allForRange.length > 0) {
-        let minOff = allForRange[0].offset, maxEnd = allForRange[0].offset + allForRange[0].size;
-        for (const s of allForRange) {
-          if (s.offset < minOff) minOff = s.offset;
-          if (s.offset + s.size > maxEnd) maxEnd = s.offset + s.size;
-        }
-        console.log(`[WC] ${label} ${ci} fetch: ${((maxEnd-minOff)/1048576).toFixed(0)} MB range, video=${allSamples.length} audio=${clipAudio.length}`);
-        const rangeBuffer = await videoFile.slice(minOff, maxEnd).arrayBuffer();
+      const [video, audio] = await Promise.all([
+        fetchStreamRange(allSamples),
+        fetchStreamRange(clipAudio),
+      ]);
+      console.log(`[WC] ${label} ${ci} fetch: video=${allSamples.length}`
+        + `${video ? ` (${(video.buffer.byteLength / 1048576).toFixed(1)}MB)` : ''} `
+        + `audio=${clipAudio.length}${audio ? ` (${(audio.buffer.byteLength / 1048576).toFixed(1)}MB)` : ''}`);
+
+      if (video) {
         for (const s of allSamples) {
           if (!clipDataMap.has(s.offset))
-            clipDataMap.set(s.offset, new Uint8Array(rangeBuffer, s.offset - minOff, s.size));
+            clipDataMap.set(s.offset, new Uint8Array(video.buffer, s.offset - video.lo, s.size));
         }
+      }
+      if (audio) {
         for (const s of clipAudio) {
           if (!audioDataMap.has(s.offset))
             audioDataMap.set(s.offset,
-              new Uint8Array(rangeBuffer, s.offset - minOff, s.size).slice());
+              new Uint8Array(audio.buffer, s.offset - audio.lo, s.size).slice());
         }
       }
       return clipDataMap;
@@ -1142,7 +1180,12 @@ function cancelExportFn() {
 }
 
 function isFileAccessError(err) {
-  return err.message.includes('no longer accessible') || err.message.includes('Failed to load video');
+  // NotReadableError/NotFoundError are the raw DOMExceptions Chrome throws
+  // when a File read fails at the OS/content-provider level (e.g. Android
+  // content:// staleness) — the other two are this app's own wrapped messages
+  // for the same class of failure detected earlier in the pipeline.
+  return err.name === 'NotReadableError' || err.name === 'NotFoundError'
+    || err.message.includes('no longer accessible') || err.message.includes('Failed to load video');
 }
 
 function showReopenVideoButton() {
@@ -1157,6 +1200,24 @@ function showReopenVideoButton() {
 }
 
 // ── Helpers ──────────────────────────────────────────
+
+// Android's content:// file access can fail a read transiently (e.g. the
+// MediaStore provider briefly locking the file, or a momentary permission
+// hiccup) without the file actually having become inaccessible. Retrying
+// after a short delay resolves these without bothering the user; if every
+// attempt fails, the error propagates so isFileAccessError() can offer the
+// "Open Video" re-grant flow instead.
+async function wcReadFileRangeWithRetry(file, start, end, attempts = 3) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await file.slice(start, end).arrayBuffer();
+    } catch (err) {
+      console.warn(`[WC] range read failed (attempt ${i}/${attempts}) — ${err.name}: ${err.message}`);
+      if (i === attempts) throw err;
+      await new Promise(r => setTimeout(r, 300 * i));
+    }
+  }
+}
 
 function wcClampBitrate(w, h, fps) {
   return Math.min(20_000_000, Math.max(2_000_000, Math.round(w * h * fps * 0.05)));
