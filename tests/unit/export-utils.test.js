@@ -20,6 +20,7 @@ const {
   wcPickH264Codec,
   wcSerializeAvcC, wcSerializeHvcC,
   wcGetSamplesForClip,
+  wcSplitNals, wcExtractAvcCFromChunk, wcAnnexBToAvcc,
 } = require('../../app/export-utils.js');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +108,9 @@ describe('wcFmtSize', () => {
 describe('wcPickH264Codec', () => {
   // The function counts macroblocks per second (MBs/sec).
   // Each macroblock = 16×16 pixels.
-  // Level thresholds:  > 589 824 → 5.1,  > 245 760 → 5.0,  else → 4.0
+  // Level thresholds:
+  //   > 2 073 600 → 6.0,  > 983 040 → 5.2,  > 589 824 → 5.1,
+  //   > 245 760 → 5.0,  else → 4.0
 
   it('720p @ 30fps uses Level 4.0', () => {
     // 80 × 45 × 30 = 108 000 MBs/sec — well under 245 760
@@ -134,8 +137,15 @@ describe('wcPickH264Codec', () => {
     expect(wcPickH264Codec(3840, 2160, 30)).toBe('avc1.640033');
   });
 
-  it('4K @ 60fps uses Level 5.1', () => {
-    expect(wcPickH264Codec(3840, 2160, 60)).toBe('avc1.640033');
+  it('4K @ 60fps uses Level 5.2 (5.1 caps out at 4K30)', () => {
+    // 240 × 135 × 60 = 1 944 000 MBs/sec — above 983 040, below 2 073 600.
+    // iPhones record 4K60 by default, so this tier matters for iOS-shot footage.
+    expect(wcPickH264Codec(3840, 2160, 60)).toBe('avc1.640034');
+  });
+
+  it('8K @ 30fps uses Level 6.0', () => {
+    // 480 × 270 × 30 = 3 888 000 MBs/sec — above 2 073 600
+    expect(wcPickH264Codec(7680, 4320, 30)).toBe('avc1.64003c');
   });
 
   it('rounds up to the next macroblock on non-multiples of 16', () => {
@@ -304,6 +314,102 @@ describe('wcSerializeHvcC', () => {
     const result = wcSerializeHvcC({ ...box, general_constraint_indicator_flags: undefined });
     // Bytes 6–11 should all be 0x00 (the buffer was zero-initialised)
     expect(Array.from(result.slice(6, 12))).toEqual([0, 0, 0, 0, 0, 0]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// wcSplitNals / wcExtractAvcCFromChunk / wcAnnexBToAvcc — recover codec config
+// from an encoded chunk when the encoder attaches no decoderConfig metadata
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Minimal-but-realistic NAL payloads. First byte's low 5 bits = NAL type:
+// 7 = SPS, 8 = PPS, 5 = IDR slice.
+const spsNal = new Uint8Array([0x67, 0x64, 0x00, 0x28, 0xac, 0xd9, 0x40]);
+const ppsNal = new Uint8Array([0x68, 0xeb, 0xe3, 0xcb]);
+const idrNal = new Uint8Array([0x65, 0x88, 0x84, 0x00, 0x33, 0xff]);
+
+const lenPrefix = (n) => new Uint8Array([n >>> 24, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
+const concatBytes = (...arrays) => {
+  const out = new Uint8Array(arrays.reduce((s, a) => s + a.byteLength, 0));
+  let o = 0;
+  for (const a of arrays) { out.set(a, o); o += a.byteLength; }
+  return out;
+};
+const avccChunk = (...nals) => concatBytes(...nals.flatMap(n => [lenPrefix(n.byteLength), n]));
+const startCode3 = new Uint8Array([0, 0, 1]);
+const startCode4 = new Uint8Array([0, 0, 0, 1]);
+
+describe('wcSplitNals', () => {
+  it('parses AVCC (length-prefixed) framing', () => {
+    const result = wcSplitNals(avccChunk(spsNal, ppsNal, idrNal));
+    expect(result.format).toBe('avcc');
+    expect(result.nals.length).toBe(3);
+    expect(Array.from(result.nals[0])).toEqual(Array.from(spsNal));
+    expect(Array.from(result.nals[2])).toEqual(Array.from(idrNal));
+  });
+
+  it('parses Annex B framing with 4-byte start codes', () => {
+    const result = wcSplitNals(concatBytes(startCode4, spsNal, startCode4, ppsNal, startCode4, idrNal));
+    expect(result.format).toBe('annexb');
+    expect(result.nals.length).toBe(3);
+    expect(Array.from(result.nals[0])).toEqual(Array.from(spsNal));
+  });
+
+  it('parses Annex B framing with 3-byte start codes', () => {
+    const result = wcSplitNals(concatBytes(startCode3, spsNal, startCode3, idrNal));
+    expect(result.format).toBe('annexb');
+    expect(result.nals.length).toBe(2);
+    expect(Array.from(result.nals[1])).toEqual(Array.from(idrNal));
+  });
+
+  it('returns null for data that is neither framing', () => {
+    // 0xff lead byte cannot be an AVCC length that fits, and there's no start code.
+    expect(wcSplitNals(new Uint8Array([0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa]))).toBeNull();
+  });
+});
+
+describe('wcExtractAvcCFromChunk', () => {
+  it('builds a valid avcC from an AVCC keyframe containing SPS+PPS', () => {
+    const { description, format } = wcExtractAvcCFromChunk(avccChunk(spsNal, ppsNal, idrNal));
+    expect(format).toBe('avcc');
+    expect(description[0]).toBe(1);          // configurationVersion
+    expect(description[1]).toBe(spsNal[1]);  // AVCProfileIndication from SPS byte 1
+    expect(description[3]).toBe(spsNal[3]);  // AVCLevelIndication from SPS byte 3
+    // Matches wcSerializeAvcC output for the same parameter sets
+    const expected = wcSerializeAvcC({
+      configurationVersion: 1,
+      AVCProfileIndication: spsNal[1], profile_compatibility: spsNal[2],
+      AVCLevelIndication: spsNal[3], lengthSizeMinusOne: 3,
+      SPS: [{ nalu: spsNal }], PPS: [{ nalu: ppsNal }],
+    });
+    expect(Array.from(description)).toEqual(Array.from(expected));
+  });
+
+  it('builds a valid avcC from an Annex B keyframe', () => {
+    const chunk = concatBytes(startCode4, spsNal, startCode4, ppsNal, startCode3, idrNal);
+    const { description, format } = wcExtractAvcCFromChunk(chunk);
+    expect(format).toBe('annexb');
+    expect(description[0]).toBe(1);
+  });
+
+  it('returns null when the chunk has no SPS/PPS (delta frame)', () => {
+    expect(wcExtractAvcCFromChunk(avccChunk(idrNal))).toBeNull();
+  });
+});
+
+describe('wcAnnexBToAvcc', () => {
+  it('converts Annex B data to length-prefixed AVCC', () => {
+    const result = wcAnnexBToAvcc(concatBytes(startCode4, spsNal, startCode3, idrNal));
+    expect(Array.from(result)).toEqual(Array.from(avccChunk(spsNal, idrNal)));
+  });
+
+  it('returns AVCC data unchanged', () => {
+    const chunk = avccChunk(spsNal, ppsNal, idrNal);
+    expect(wcAnnexBToAvcc(chunk)).toBe(chunk);
+  });
+
+  it('returns null for unparseable data', () => {
+    expect(wcAnnexBToAvcc(new Uint8Array([0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa]))).toBeNull();
   });
 });
 

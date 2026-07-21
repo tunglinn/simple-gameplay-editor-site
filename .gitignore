@@ -6,3 +6,4 @@
 !.env.example
 /node_modules
 /.claude
+/test-results

@@ -118,15 +118,18 @@ async function addClipViaApi(page, startSec, endSec) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/');
-  // Wait until the main JS has initialised (the undo button is created by init).
-  await page.waitForSelector('#btn-undo');
+  // The editor app lives at /app.html — the site root is the marketing page.
+  await page.goto('/app.html');
+  // Wait until the DOM is parsed (#btn-undo is static markup inside the closed
+  // editor view, so it's attached but not visible) and app.js has initialised.
+  await page.waitForSelector('#btn-undo', { state: 'attached' });
+  await page.waitForFunction(() => typeof doVideoExport === 'function');
 });
 
 test('page loads without JS errors', async ({ page }) => {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto('/');
+  await page.goto('/app.html');
   await page.waitForLoadState('networkidle');
   expect(errors).toHaveLength(0);
 });
@@ -153,9 +156,6 @@ test('WebCodecs export completes and produces a non-empty MP4', async ({ page })
   // Open the export panel.
   await page.locator('#editor-view').press('Escape');
   await page.locator('#nav-export').click();
-
-  // Make sure WebCodecs engine is selected (default).
-  await expect(page.locator('#eng-webcodecs')).toHaveClass(/active/);
 
   // Start the download and capture the file contents.
   const [download] = await Promise.all([
@@ -252,6 +252,11 @@ test('exported frames are not all black', async ({ page }) => {
       video.onloadeddata = res;
       video.onerror      = rej;
     });
+
+    // Seek before sampling: drawImage right after 'loadeddata' can capture an
+    // unpresented (black) frame in headless Chromium. Seeking forces a decode
+    // and present, and 'seeked' guarantees the frame is ready to draw.
+    await new Promise(res => { video.onseeked = res; video.currentTime = 0.05; });
 
     const canvas  = document.createElement('canvas');
     canvas.width  = video.videoWidth;

@@ -32,11 +32,15 @@ function wcPickH264Codec(width, height, fps) {
   // reject or corrupt frames silently.
   //   Level 4.0 (0x28): ≤ 245 760 MBs/sec — 1920×1080 @ 30 fps
   //   Level 5.0 (0x32): ≤ 589 824 MBs/sec — ~2560×1440 @ 30 fps
-  //   Level 5.1 (0x33): ≤ 983 040 MBs/sec — 3840×2160 @ 30 fps (4K)
+  //   Level 5.1 (0x33): ≤ 983 040 MBs/sec — 3840×2160 @ 30 fps (4K30)
+  //   Level 5.2 (0x34): ≤ 2 073 600 MBs/sec — 3840×2160 @ 60 fps (4K60, iPhone default)
+  //   Level 6.0 (0x3c): ≤ 4 177 920 MBs/sec — 8K @ 30 fps
   const mbsPerSec = Math.ceil(width / 16) * Math.ceil(height / 16) * fps;
-  if (mbsPerSec > 589_824) return 'avc1.640033'; // Level 5.1 — 4K
-  if (mbsPerSec > 245_760) return 'avc1.640032'; // Level 5.0 — 1440p or 1080p60
-  return 'avc1.640028';                           // Level 4.0 — 1080p30 and below
+  if (mbsPerSec > 2_073_600) return 'avc1.64003c'; // Level 6.0 — 8K30
+  if (mbsPerSec > 983_040)   return 'avc1.640034'; // Level 5.2 — 4K60
+  if (mbsPerSec > 589_824)   return 'avc1.640033'; // Level 5.1 — 4K30
+  if (mbsPerSec > 245_760)   return 'avc1.640032'; // Level 5.0 — 1440p or 1080p60
+  return 'avc1.640028';                             // Level 4.0 — 1080p30 and below
 }
 
 function wcSerializeAvcC(box) {
@@ -175,12 +179,102 @@ function wcExtractRawBox(fileBuffer, typeFourCC) {
   return null;
 }
 
+// Split an encoded H.264 chunk into its NAL units. Handles both framings an
+// encoder may produce:
+//   AVCC:    each NAL prefixed by a 4-byte big-endian length (what MP4 stores)
+//   Annex B: NALs separated by 00 00 01 / 00 00 00 01 start codes
+// Returns { format: 'avcc' | 'annexb', nals: Uint8Array[] } or null if the
+// data parses cleanly as neither.
+function wcSplitNals(data) {
+  // Try AVCC first: walk the length-prefixed units. Valid only if the walk
+  // lands exactly on the end of the buffer — random data essentially never
+  // survives that check, so a false positive is not a practical concern.
+  if (data.byteLength >= 5) {
+    const nals = [];
+    let pos = 0, ok = true;
+    while (pos + 4 <= data.byteLength) {
+      const len = ((data[pos] << 24) | (data[pos+1] << 16) | (data[pos+2] << 8) | data[pos+3]) >>> 0;
+      if (len === 0 || pos + 4 + len > data.byteLength) { ok = false; break; }
+      nals.push(data.subarray(pos + 4, pos + 4 + len));
+      pos += 4 + len;
+    }
+    if (ok && pos === data.byteLength && nals.length) return { format: 'avcc', nals };
+  }
+  // Annex B: locate every 00 00 01 start code. NAL payloads cannot contain
+  // 00 00 01 themselves (emulation prevention bytes guarantee it), so a plain
+  // scan is safe. A 4-byte start code (00 00 00 01) is the same pattern with a
+  // leading zero that we trim off the previous NAL's tail below.
+  const starts = [];
+  for (let i = 0; i + 2 < data.byteLength; i++) {
+    if (data[i] === 0 && data[i+1] === 0 && data[i+2] === 1) { starts.push(i + 3); i += 2; }
+  }
+  if (!starts.length) return null;
+  // Everything before the first start code must be zero padding, else this
+  // isn't Annex B at all.
+  for (let i = 0; i < starts[0] - 3; i++) if (data[i] !== 0) return null;
+  const nals = [];
+  for (let k = 0; k < starts.length; k++) {
+    let end = k + 1 < starts.length ? starts[k+1] - 3 : data.byteLength;
+    while (end > starts[k] && data[end-1] === 0) end--; // trim next start code's lead zeros / padding
+    if (end > starts[k]) nals.push(data.subarray(starts[k], end));
+  }
+  return nals.length ? { format: 'annexb', nals } : null;
+}
+
+// Build an AVCDecoderConfigurationRecord ("description") from the SPS/PPS NAL
+// units carried in-band inside an encoded keyframe chunk.
+//
+// Why this exists: some encoders (notably Safari's in 'realtime' latency mode)
+// never attach decoderConfig metadata to their output chunks. Without a
+// description, mp4-muxer silently omits the avcC box and the exported file is
+// unplayable. The parameter sets are still present in the first keyframe's
+// bytes, so we recover them from there. Profile/compat/level bytes are read
+// straight from the SPS payload (bytes 1–3 by definition).
+function wcExtractAvcCFromChunk(data) {
+  const parsed = wcSplitNals(data);
+  if (!parsed) return null;
+  const sps = parsed.nals.filter(n => (n[0] & 0x1f) === 7);
+  const pps = parsed.nals.filter(n => (n[0] & 0x1f) === 8);
+  if (!sps.length || !pps.length) return null;
+  const description = wcSerializeAvcC({
+    configurationVersion: 1,
+    AVCProfileIndication:  sps[0][1],
+    profile_compatibility: sps[0][2],
+    AVCLevelIndication:    sps[0][3],
+    lengthSizeMinusOne:    3,
+    SPS: sps.map(nalu => ({ nalu })),
+    PPS: pps.map(nalu => ({ nalu })),
+  });
+  return { description, format: parsed.format };
+}
+
+// Re-frame an Annex B chunk (start-code separated) as AVCC (4-byte length
+// prefixes) so it can be stored in an MP4 container. Already-AVCC data is
+// returned as-is. Returns null if the data doesn't parse as either framing.
+function wcAnnexBToAvcc(data) {
+  const parsed = wcSplitNals(data);
+  if (!parsed) return null;
+  if (parsed.format === 'avcc') return data;
+  let size = 0;
+  for (const n of parsed.nals) size += 4 + n.byteLength;
+  const out = new Uint8Array(size);
+  let o = 0;
+  for (const n of parsed.nals) {
+    out[o++] =  n.byteLength >>> 24;
+    out[o++] = (n.byteLength >>> 16) & 0xff;
+    out[o++] = (n.byteLength >>>  8) & 0xff;
+    out[o++] =  n.byteLength         & 0xff;
+    out.set(n, o); o += n.byteLength;
+  }
+  return out;
+}
+
 // CommonJS export — used by Node.js / Vitest.
 // The `if` guard makes this a no-op in the browser, where `module` is undefined.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     fmt, fmtDur, wcYield, wcFmtSize,
     wcPickH264Codec, wcSerializeAvcC, wcSerializeHvcC, wcGetSamplesForClip,
-    wcExtractRawBox,
+    wcExtractRawBox, wcSplitNals, wcExtractAvcCFromChunk, wcAnnexBToAvcc,
   };
 }

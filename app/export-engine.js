@@ -3,13 +3,26 @@
 // ════════════════════════════════════════════════════
 let cancelExport = false;
 
+// iPadOS Safari reports a desktop "Macintosh" user agent, so a plain UA test
+// misses iPads entirely. The maxTouchPoints check catches them — real Macs
+// report 0 touch points.
+function wcIsApplePlatform() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent)
+    || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+}
+
 async function doWebCodecsExport() {
   // WebCodecs is a low-level browser API for encoding/decoding video and audio.
   // It gives direct access to the hardware codec (GPU) rather than going through
-  // the browser's high-level video element. Only available in Chrome/Edge.
+  // the browser's high-level video element.
   if (!('VideoEncoder' in window) || !('VideoDecoder' in window)) {
-    toast('WebCodecs not supported — use Chrome or Edge');
-    trackEvent('browser_unsupported', { message: 'WebCodecs not supported' });
+    // Every browser on iOS is WebKit under the hood, so "use Chrome" is wrong
+    // advice there — WebCodecs arrived with iOS/iPadOS 16.4.
+    const msg = wcIsApplePlatform()
+      ? 'Video export needs iOS 16.4 or later — update your device'
+      : 'WebCodecs not supported — use Chrome or Edge';
+    toast(msg);
+    trackEvent('browser_unsupported', { message: msg });
     return;
   }
   // Combined export uses two passes: highlighted clips with no scoreboard, then
@@ -161,24 +174,24 @@ async function doWebCodecsExport() {
       + (hlGroups ? hlGroups.reduce((n, g) => n + g.frameSamples.length, 0) : 0);
     if (!totalFrames) throw new Error('No frames found in the selected clip ranges');
 
-    // Pre-fetch compressed video bytes for every clip RIGHT NOW, before any long
-    // async work (encoder setup, per-clip decoding) can create a gap during which
-    // Android may revoke file-picker access.  One contiguous File.slice() per clip
-    // (a single range spanning all samples for that clip) avoids per-sample IPC
-    // overhead while keeping memory bounded to one clip's data at a time in the
-    // array — each entry's ArrayBuffer is eligible for GC once clipDataMap.clear()
-    // drops the Uint8Array views that reference it.
-    setProgress(8, 'Loading clip data…');
-    const allClipDataMaps = [];
+    const isIOS = wcIsApplePlatform();
+    const isMobile = isIOS || /Android/i.test(navigator.userAgent);
+
     const audioDataMap = new Map(); // offset → Uint8Array (audio sample bytes, all clips)
     const aTs = audioTrack?.timescale;
-    for (let ci = 0; ci < clipGroups.length; ci++) {
-      if (cancelExport) break;
-      const { clip, allSamples } = clipGroups[ci];
+
+    // Fetch the compressed bytes for one clip. One contiguous File.slice() per
+    // clip (a single range spanning all samples for that clip) avoids per-sample
+    // IPC overhead. The returned map's Uint8Array views hold the range buffer
+    // alive only until clipDataMap.clear() runs after the clip encodes.
+    // includeAudio: also copy this clip's audio bytes into audioDataMap (copied,
+    // not viewed, so the range buffer can still be freed after the video decode).
+    const fetchClipData = async (group, label, ci, includeAudio) => {
+      const { clip, allSamples } = group;
       const clipDataMap = new Map();
 
       // Audio samples for this clip (filtered by time window, same as the muxing loop).
-      const clipAudio = (audioTrack && audioSamples.length)
+      const clipAudio = (includeAudio && audioTrack && audioSamples.length)
         ? audioSamples.filter(s => {
             const t = s.cts / (s.timescale || aTs);
             return t >= clip.start - 0.002 && t <= clip.end + 0.002;
@@ -193,50 +206,60 @@ async function doWebCodecsExport() {
           if (s.offset < minOff) minOff = s.offset;
           if (s.offset + s.size > maxEnd) maxEnd = s.offset + s.size;
         }
-        console.log(`[WC] clip ${ci} pre-fetch: ${((maxEnd-minOff)/1048576).toFixed(0)} MB range, video=${allSamples.length} audio=${clipAudio.length}`);
+        console.log(`[WC] ${label} ${ci} fetch: ${((maxEnd-minOff)/1048576).toFixed(0)} MB range, video=${allSamples.length} audio=${clipAudio.length}`);
         const rangeBuffer = await videoFile.slice(minOff, maxEnd).arrayBuffer();
         for (const s of allSamples) {
           if (!clipDataMap.has(s.offset))
             clipDataMap.set(s.offset, new Uint8Array(rangeBuffer, s.offset - minOff, s.size));
         }
-        // Audio bytes are copied (not viewed) so rangeBuffer can be freed when
-        // clipDataMap is cleared after each clip's video decode.
         for (const s of clipAudio) {
           if (!audioDataMap.has(s.offset))
             audioDataMap.set(s.offset,
               new Uint8Array(rangeBuffer, s.offset - minOff, s.size).slice());
         }
       }
-      allClipDataMaps.push(clipDataMap);
-      setProgress(8 + Math.round(3 * (ci + 1) / clipGroups.length), 'Loading clip data…',
-        `Clip ${ci + 1} / ${clipGroups.length}`);
-    }
-    if (cancelExport) return;
+      return clipDataMap;
+    };
 
-    // For combined export, also pre-fetch video data for the highlight clips (pass 1).
-    // Audio is already captured in audioDataMap above since highlights ⊂ allClips.
-    const hlDataMaps = [];
-    if (exportCombined) {
-      for (let ci = 0; ci < hlGroups.length; ci++) {
+    // When each clip's bytes are fetched differs by platform:
+    //  • Android/desktop: fetch every clip RIGHT NOW, before any long async work
+    //    (encoder setup, per-clip decoding) can create a gap during which Android
+    //    may revoke file-picker access. Costs memory: every clip's range stays
+    //    alive until that clip finishes encoding.
+    //  • iOS: fetch each clip just-in-time inside the encode loop instead. iOS
+    //    Safari caps a tab's memory far below desktop (~1–1.5 GB, and the tab is
+    //    killed without any error message), so holding all clips at once crashes
+    //    on real match footage — and iOS file handles stay readable for the whole
+    //    session, so Android's revocation problem doesn't exist there.
+    // getClipData/getHlData resolve to the data map for clip index ci; on the
+    // prefetch platforms they just return the already-loaded map.
+    let getClipData, getHlData = null;
+    if (isIOS) {
+      getClipData = ci => fetchClipData(clipGroups[ci], 'clip', ci, true);
+      if (exportCombined) getHlData = ci => fetchClipData(hlGroups[ci], 'hl clip', ci, false);
+    } else {
+      setProgress(8, 'Loading clip data…');
+      const allClipDataMaps = [];
+      for (let ci = 0; ci < clipGroups.length; ci++) {
         if (cancelExport) break;
-        const { allSamples } = hlGroups[ci];
-        const clipDataMap = new Map();
-        if (allSamples.length > 0) {
-          let minOff = allSamples[0].offset, maxEnd = allSamples[0].offset + allSamples[0].size;
-          for (const s of allSamples) {
-            if (s.offset < minOff) minOff = s.offset;
-            if (s.offset + s.size > maxEnd) maxEnd = s.offset + s.size;
-          }
-          console.log(`[WC] hl clip ${ci} pre-fetch: ${((maxEnd-minOff)/1048576).toFixed(0)} MB range, video=${allSamples.length}`);
-          const rangeBuffer = await videoFile.slice(minOff, maxEnd).arrayBuffer();
-          for (const s of allSamples) {
-            if (!clipDataMap.has(s.offset))
-              clipDataMap.set(s.offset, new Uint8Array(rangeBuffer, s.offset - minOff, s.size));
-          }
-        }
-        hlDataMaps.push(clipDataMap);
+        allClipDataMaps.push(await fetchClipData(clipGroups[ci], 'clip', ci, true));
+        setProgress(8 + Math.round(3 * (ci + 1) / clipGroups.length), 'Loading clip data…',
+          `Clip ${ci + 1} / ${clipGroups.length}`);
       }
       if (cancelExport) return;
+      getClipData = ci => allClipDataMaps[ci];
+
+      // For combined export, also pre-fetch video data for the highlight clips (pass 1).
+      // Audio is already captured in audioDataMap above since highlights ⊂ allClips.
+      if (exportCombined) {
+        const hlDataMaps = [];
+        for (let ci = 0; ci < hlGroups.length; ci++) {
+          if (cancelExport) break;
+          hlDataMaps.push(await fetchClipData(hlGroups[ci], 'hl clip', ci, false));
+        }
+        if (cancelExport) return;
+        getHlData = ci => hlDataMaps[ci];
+      }
     }
 
     // OffscreenCanvas: a canvas element that lives only in memory, not on the page.
@@ -246,6 +269,33 @@ async function doWebCodecsExport() {
     const ctx = canvas.getContext('2d');
     console.log('[WC] OffscreenCanvas ctx:', ctx ? 'ok' : '⚠ NULL — all canvas ops will silently no-op');
 
+    // Converts a decoded VideoFrame into an ImageBitmap that survives the frame
+    // being closed (frames must be closed promptly to free the hardware
+    // decoder's output buffer pool). createImageBitmap(VideoFrame) is the fast
+    // path everywhere, but WebKit's support for VideoFrame sources has gaps —
+    // if it rejects, permanently switch to bouncing the frame through a scratch
+    // canvas, since drawImage accepts a VideoFrame in every WebCodecs browser.
+    let scratchCanvas = null, scratchCtx = null;
+    const bitmapViaScratch = (frame) => {
+      if (!scratchCanvas) {
+        scratchCanvas = new OffscreenCanvas(width, height);
+        scratchCtx = scratchCanvas.getContext('2d');
+      }
+      scratchCtx.drawImage(frame, 0, 0, width, height);
+      // transferToImageBitmap detaches the canvas's current bitmap (no copy) and
+      // resets the canvas to blank, ready for the next frame.
+      return scratchCanvas.transferToImageBitmap();
+    };
+    let frameToBitmap = async (frame) => {
+      try {
+        return await createImageBitmap(frame);
+      } catch (e) {
+        console.warn('[WC] createImageBitmap(VideoFrame) failed — using scratch canvas fallback:', e.message);
+        frameToBitmap = async f => bitmapViaScratch(f);
+        return bitmapViaScratch(frame);
+      }
+    };
+
     // On mobile (Android/iOS), the JS heap is capped well below desktop limits. ArrayBufferTarget accumulates
     // the entire output as one contiguous ArrayBuffer, which crashes the tab on
     // large exports. StreamTarget instead calls onData with small sequential chunks
@@ -254,15 +304,33 @@ async function doWebCodecsExport() {
     // the position argument is safe, and Android's MediaExtractor can parse it.
     // Desktop uses 'in-memory' (moov at front, WMP compatible).
     //
+    // The chunks are moved out of the JS heap as they arrive: every ~64 MB the
+    // accumulated Uint8Arrays are consolidated into a Blob. Blob storage is
+    // browser-managed and may be disk-backed, so the JS heap never holds more
+    // than one consolidation window — without this, chunks + the final Blob
+    // briefly hold the entire output in memory twice. Building the final Blob
+    // from Blob parts is cheap: Blob-of-Blobs references, it doesn't copy.
+    //
     // firstTimestampBehavior 'offset': subtracts the first frame's timestamp from
     // all subsequent timestamps, ensuring the output video always starts at t=0.
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const dbg = $('exp-debug');
     if (dbg) dbg.textContent = `fastStart: ${isMobile ? 'fragmented' : 'in-memory'}`;
-    const outputChunks = [];
+    const outputChunks = [];    // pending Uint8Arrays (JS heap)
+    const outputBlobParts = []; // consolidated Blobs (browser-managed storage)
+    let outputPendingBytes = 0;
+    const OUTPUT_CONSOLIDATE_BYTES = 64 * 1024 * 1024;
+    const onMuxData = (data, _position) => {
+      outputChunks.push(data.slice()); // copy — the muxer may reuse its buffer
+      outputPendingBytes += data.byteLength;
+      if (outputPendingBytes >= OUTPUT_CONSOLIDATE_BYTES) {
+        outputBlobParts.push(new Blob(outputChunks));
+        outputChunks.length = 0;
+        outputPendingBytes = 0;
+      }
+    };
     const muxer = new Muxer({
       target: isMobile
-        ? new StreamTarget({ onData: (data, _position) => outputChunks.push(data.slice()) })
+        ? new StreamTarget({ onData: onMuxData })
         : new ArrayBufferTarget(),
       // 'avc' = H.264/AVC (Advanced Video Coding) — the most widely supported
       // video codec. Each compressed frame is a fragment of H.264 bitstream.
@@ -282,6 +350,16 @@ async function doWebCodecsExport() {
     let encErrClip = -1;
     let chunksFromEncoder = 0;
     let lastMuxTs     = -1; // last chunk.timestamp seen by the encoder output callback
+    // Safari's encoder (especially in 'realtime' latency mode) may never attach
+    // decoderConfig metadata to its output chunks. mp4-muxer silently omits the
+    // avcC box without it and the exported file is unplayable — so the first
+    // chunk of each encoder instance is validated, and if the description is
+    // missing it is synthesized from the SPS/PPS carried in-band in that first
+    // keyframe. If the encoder also ignored avc:{format:'avc'} and produced
+    // Annex B framing, every chunk is re-framed to AVCC before muxing.
+    let firstChunkOfEncoder = true;
+    let annexBDetected      = false;
+    let synthesizedDesc     = null;
 
     // VideoEncoder compresses raw image frames (VideoFrame objects) into
     // H.264 bitstream chunks. Each output chunk is handed to the muxer immediately.
@@ -290,6 +368,7 @@ async function doWebCodecsExport() {
     // the full-match section is independently seekable in the output file.
     let encoder;
     const makeEncoder = () => {
+      firstChunkOfEncoder = true; // each instance re-validates its first chunk
       encoder = new VideoEncoder({
         output: (chunk, meta) => {
           if (!cancelExport) {
@@ -306,8 +385,35 @@ async function doWebCodecsExport() {
             } else if (chunksFromEncoder % 20 === 0) {
               console.log(`[WC] encoder output chunks so far: ${chunksFromEncoder}`);
             }
+
+            let muxMeta = meta;
+            let muxData = chunkData;
+            if (firstChunkOfEncoder) {
+              firstChunkOfEncoder = false;
+              if (!meta?.decoderConfig?.description) {
+                const fixed = wcExtractAvcCFromChunk(chunkData);
+                if (fixed) {
+                  annexBDetected  = fixed.format === 'annexb';
+                  synthesizedDesc = fixed.description;
+                  console.warn(`[WC] encoder provided no decoderConfig.description — synthesized avcC from in-band SPS/PPS (framing: ${fixed.format})`);
+                } else {
+                  // No description and no in-band parameter sets: the output
+                  // genuinely cannot be made playable. Fail loudly instead of
+                  // producing a silent broken file.
+                  encErr = new Error('Encoder produced no codec configuration — this device cannot export a playable MP4');
+                  return;
+                }
+              }
+            }
+            if (synthesizedDesc && !meta?.decoderConfig?.description) {
+              muxMeta = { decoderConfig: { codec: encoderConfig.codec, description: synthesizedDesc } };
+            }
+            if (annexBDetected) {
+              muxData = wcAnnexBToAvcc(chunkData) || chunkData;
+            }
+
             const chunkDuration = chunk.duration ?? Math.round(1_000_000 / fps);
-            muxer.addVideoChunkRaw(chunkData, chunk.type, chunk.timestamp, chunkDuration, meta);
+            muxer.addVideoChunkRaw(muxData, chunk.type, chunk.timestamp, chunkDuration, muxMeta);
           }
         },
         error: e => {
@@ -325,6 +431,8 @@ async function doWebCodecsExport() {
     //   Level 4.0 (avc1.640028) — up to ~245 760 MBs/sec → 1080p @ 30 fps
     //   Level 5.0 (avc1.640032) — up to ~589 824 MBs/sec → ~1440p @ 30 fps
     //   Level 5.1 (avc1.640033) — up to ~983 040 MBs/sec → 4K @ 30 fps
+    //   Level 5.2 (avc1.640034) — up to ~2 073 600 MBs/sec → 4K @ 60 fps
+    //   Level 6.0 (avc1.64003c) — up to ~4 177 920 MBs/sec → 8K @ 30 fps
     const encoderConfig = {
       codec: wcPickH264Codec(outW, outH, fps),
       width: outW, height: outH,
@@ -344,13 +452,31 @@ async function doWebCodecsExport() {
       // an unreadable bitstream ("missing picture in access unit" in ffprobe).
       avc: { format: 'avc' },
     };
+    // Verify the config is actually encodable before committing. If the device
+    // rejects it (e.g. older hardware that can't encode 4K60 at any level),
+    // configure() would only fail asynchronously with a cryptic error — surface
+    // a clear one now instead. Some WebKit builds reject the hardwareAcceleration
+    // hint itself rather than the codec, so retry without it before giving up.
+    let encSupported = null;
     try {
-      const encSupport = await VideoEncoder.isConfigSupported(encoderConfig);
+      let encSupport = await VideoEncoder.isConfigSupported(encoderConfig);
       console.log('[WC] encoder isConfigSupported:', encSupport.supported,
         '| hw:', encSupport.config?.hardwareAcceleration,
         '| codec:', encSupport.config?.codec);
+      if (encSupport.supported === false) {
+        const { hardwareAcceleration, ...noHint } = encoderConfig;
+        encSupport = await VideoEncoder.isConfigSupported(noHint);
+        console.log('[WC] encoder isConfigSupported (no hw hint):', encSupport.supported);
+        if (encSupport.supported) delete encoderConfig.hardwareAcceleration;
+      }
+      encSupported = encSupport.supported;
     } catch (e) {
+      // A probe that throws is not proof the config is bad (older implementations
+      // throw on unrecognised keys) — log and let configure() decide.
       console.warn('[WC] encoder isConfigSupported() threw:', e.message);
+    }
+    if (encSupported === false) {
+      throw new Error(`This device cannot encode ${outW}×${outH} @ ${fps} fps H.264 video (${encoderConfig.codec})`);
     }
     makeEncoder();
 
@@ -378,7 +504,7 @@ async function doWebCodecsExport() {
       if (codec.startsWith('av01')) {
         throw new Error('AV1 video is not supported by the WebCodecs export engine — convert the file to H.264 or H.265 first.');
       }
-      throw new Error('Could not read codec config from video. H.264 (AVC) and H.265 (HEVC) files are supported. If the file is HEVC and this still fails, try the MediaRecorder engine.');
+      throw new Error('Could not read codec config from video. H.264 (AVC) and H.265 (HEVC) files are supported — convert the file to one of those and try again.');
     }
 
     // MP4Box can produce a structurally valid description record that has ZERO
@@ -425,11 +551,21 @@ async function doWebCodecsExport() {
       console.log(`[WC] description valid (byte[0]==0x01): ${valid}${valid ? ' ✓' : ' ⚠ GARBAGE — this is why the decoder produces no frames'}`);
     }
     try {
-      const decSupport = await VideoDecoder.isConfigSupported(decoderConfig);
+      let decSupport = await VideoDecoder.isConfigSupported(decoderConfig);
       console.log('[WC] decoder isConfigSupported:', decSupport.supported,
         '| hw:', decSupport.config?.hardwareAcceleration,
         '| codec:', decSupport.config?.codec,
         '| has description:', !!(decSupport.config?.description));
+      if (decSupport.supported === false) {
+        // 'prefer-hardware' is rejected outright on machines with no hardware
+        // decoder (and by some WebKit builds) — configure() would then throw
+        // "Unsupported configuration". The software decoder works fine, so
+        // drop the hint and re-probe before giving up.
+        const { hardwareAcceleration, ...noHint } = decoderConfig;
+        decSupport = await VideoDecoder.isConfigSupported(noHint);
+        console.log('[WC] decoder isConfigSupported (no hw hint):', decSupport.supported);
+        if (decSupport.supported) delete decoderConfig.hardwareAcceleration;
+      }
     } catch (e) {
       console.warn('[WC] decoder isConfigSupported() threw:', e.message);
     }
@@ -447,12 +583,13 @@ async function doWebCodecsExport() {
     let lastEncodedTs = -1;
 
     // Encode all clips in groupGroups into the shared muxer/encoder.
-    // groupDataMaps: pre-fetched video bytes, indexed parallel to groupGroups.
+    // getGroupData(ci): resolves to the clip's compressed bytes — already in
+    //   memory on prefetch platforms, fetched just-in-time on iOS.
     // showScoreboard: whether to draw the score overlay on each frame.
     // progressBase / progressRange: this group's slice of the 0–100 progress bar.
     // passLabel: prefix shown in progress meta text, e.g. "Highlights" or "Match".
     // Mutates outer: framesEncoded, cumulativeDuration, lastEncodedTs, encErr, encErrClip.
-    const encodeGroup = async (groupGroups, groupDataMaps, showScoreboard, progressBase, progressRange, passLabel) => {
+    const encodeGroup = async (groupGroups, getGroupData, showScoreboard, progressBase, progressRange, passLabel) => {
       const groupTotalFrames = groupGroups.reduce((n, g) => n + g.frameSamples.length, 0);
       const framesAtGroupStart = framesEncoded;
 
@@ -468,7 +605,7 @@ async function doWebCodecsExport() {
           console.log(`[WC] ${passLabel} clip ${ci} preroll: is_sync=${s0.is_sync}, dts=${(s0.dts/ts0).toFixed(3)}s, offset=${s0.offset}, size=${s0.size}`);
         }
 
-        const clipDataMap = groupDataMaps[ci];
+        const clipDataMap = await getGroupData(ci);
 
         // DTS (Decode Time Stamp): the order in which the decoder must process frames.
         // CTS (Composition Time Stamp): the order in which frames should be displayed.
@@ -695,7 +832,7 @@ async function doWebCodecsExport() {
                 // createImageBitmap routes through the browser's compositing pipeline,
                 // correctly handling GPU textures on every platform. The result is a
                 // CPU-accessible RGBA ImageBitmap that can be held after the frame closes.
-                const bitmap = await createImageBitmap(frame);
+                const bitmap = await frameToBitmap(frame);
                 // Insert into reorderBuffer maintaining CTS sorted order.
                 // For B-frame sources the decoder emits in DTS order, which may differ
                 // from CTS order by up to a few frames. Sorted insertion keeps the buffer
@@ -866,7 +1003,7 @@ async function doWebCodecsExport() {
     if (exportCombined) {
       // Pass 1: highlighted clips, no scoreboard.
       setProgress(21, 'Part 1/2 — Highlights…');
-      await encodeGroup(hlGroups, hlDataMaps, false, 21, 34, 'Highlights');
+      await encodeGroup(hlGroups, getHlData, false, 21, 34, 'Highlights');
       if (cancelExport) return;
       if (encErr) throw encErr;
       // Flush the highlights encoder pass and create a fresh encoder for the full match.
@@ -879,9 +1016,9 @@ async function doWebCodecsExport() {
       makeEncoder();
       // Pass 2: all clips, with scoreboard.
       setProgress(55, 'Part 2/2 — Full match…');
-      await encodeGroup(clipGroups, allClipDataMaps, true, 55, 38, 'Match');
+      await encodeGroup(clipGroups, getClipData, true, 55, 38, 'Match');
     } else {
-      await encodeGroup(clipGroups, allClipDataMaps, !disableScoreboard, 11, 82, 'Clip');
+      await encodeGroup(clipGroups, getClipData, !disableScoreboard, 11, 82, 'Clip');
     }
 
     if (cancelExport) return;
@@ -954,10 +1091,14 @@ async function doWebCodecsExport() {
     await wcYield();
     muxer.finalize();
 
+    if (outputChunks.length) {
+      outputBlobParts.push(new Blob(outputChunks));
+      outputChunks.length = 0;
+    }
     const blob = isMobile
-      ? new Blob(outputChunks, { type: 'video/mp4' })
+      ? new Blob(outputBlobParts, { type: 'video/mp4' })
       : new Blob([muxer.target.buffer], { type: 'video/mp4' });
-    console.log(`[WC] blob size: ${blob.size} bytes (${(blob.size / 1024).toFixed(1)} KB)${isMobile ? `, chunks: ${outputChunks.length}` : ''}`);
+    console.log(`[WC] blob size: ${blob.size} bytes (${(blob.size / 1024).toFixed(1)} KB)${isMobile ? `, parts: ${outputBlobParts.length}` : ''}`);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1013,262 +1154,6 @@ function showReopenVideoButton() {
   btn.textContent = 'Open Video';
   btn.onclick = () => { retryExportAfterReopen = true; triggerOpen(); };
   body.appendChild(btn);
-}
-
-// ════════════════════════════════════════════════════
-//  MEDIARECORDER EXPORT
-// ════════════════════════════════════════════════════
-async function doMediaRecorderExport() {
-  if (!videoFile) { toast('Load a video first'); return; }
-
-  const exportClips = clips
-    .filter(c => c.start !== null && c.end !== null && c.end > c.start && (!exportHighlightsOnly || c.highlight))
-    .sort((a, b) => a.start - b.start);
-  if (!exportClips.length) {
-    toast(exportHighlightsOnly ? 'No highlighted clips to export' : 'No complete clips to export');
-    return;
-  }
-  const disableScoreboard = exportDisableScoreboard;
-  const disableWatermark  = exportDisableWatermark;
-  if (!disableWatermark && !_watermarkImg.complete) {
-    await new Promise(r => { _watermarkImg.onload = r; _watermarkImg.onerror = r; });
-  }
-  const watermarkLogo = (!disableWatermark && _watermarkImg.naturalWidth) ? _watermarkImg : null;
-  if (!('MediaRecorder' in window)) { toast('MediaRecorder not supported'); return; }
-
-  cancelExport = false;
-
-  $('export-body').innerHTML = `<div class="export-body">
-    <div class="exp-progress">
-      <div class="exp-status" id="exp-status">Initializing…</div>
-      <div class="exp-bar-wrap"><div class="exp-bar" id="exp-bar"></div></div>
-      <div class="exp-meta-txt" id="exp-meta"></div>
-      <div class="exp-note" id="exp-note">Keep this tab visible — switching away will freeze the output</div>
-      <button class="exp-cancel" id="exp-cancel-btn" onclick="cancelExportFn()">Cancel</button>
-    </div>
-  </div>`;
-
-  const setProgress = (pct, status, meta = '') => {
-    const bar = $('exp-bar'), lbl = $('exp-status'), met = $('exp-meta');
-    if (bar) bar.style.width = Math.max(0, pct) + '%';
-    if (lbl) lbl.textContent = status;
-    if (met) met.textContent = meta;
-  };
-
-  const homeLabel = $('inp-home').value || 'Home';
-  const awayLabel = $('inp-away').value || 'Away';
-
-  const onVisibilityChange = () => {
-    const note = $('exp-note');
-    if (!note) return;
-    if (document.hidden) {
-      note.textContent = 'Tab is hidden — canvas draw paused, come back to resume';
-      note.classList.add('warn');
-    } else {
-      note.textContent = 'Keep this tab visible — switching away will freeze the output';
-      note.classList.remove('warn');
-    }
-  };
-  document.addEventListener('visibilitychange', onVisibilityChange);
-
-  const vid = document.createElement('video');
-  vid.src = URL.createObjectURL(videoFile);
-  vid.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;';
-  document.body.appendChild(vid);
-
-  try {
-    setProgress(3, 'Loading video…');
-    await new Promise((res, rej) => {
-      vid.onloadedmetadata = res;
-      vid.onerror = () => rej(new Error('Failed to load video'));
-    });
-
-    const width = vid.videoWidth;
-    const height = vid.videoHeight;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-
-    const fps = 30;
-    const canvasStream = canvas.captureStream(fps);
-
-    // Attempt to add audio track from the video element
-    try {
-      const vidStream = vid.captureStream ? vid.captureStream() : null;
-      if (vidStream) {
-        for (const at of vidStream.getAudioTracks()) canvasStream.addTrack(at);
-      }
-    } catch (e) {
-      console.warn('Audio capture unavailable:', e);
-    }
-
-    const mimeTypes = [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm',
-    ];
-    const mimeType = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
-    const bitrate = getExportBitrate(width, height, fps);
-    const recorder = new MediaRecorder(canvasStream, {
-      mimeType,
-      videoBitsPerSecond: bitrate,
-    });
-
-    // Use requestVideoFrameCallback when available — it fires once per decoded
-    // video frame instead of once per screen refresh, eliminating duplicate/skipped frames.
-    const useRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
-
-    const chunks = [];
-    recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-
-    const sortedClips = exportClips; // already sorted
-    const totalDuration = sortedClips.reduce((s, c) => s + (c.end - c.start), 0);
-    let processedDuration = 0;
-
-    const bitrateLabel = bitrate >= 1_000_000 ? (bitrate / 1_000_000).toFixed(0) + ' Mbps' : (bitrate / 1000).toFixed(0) + ' kbps';
-    setProgress(8, 'Starting recorder…', `${sortedClips.length} clip${sortedClips.length !== 1 ? 's' : ''} · ${bitrateLabel} · ${useRVFC ? 'rVFC' : 'rAF'}`);
-
-    // Start paused — we resume only once the pre-roll has cleared for each clip.
-    recorder.start(200);
-    recorder.pause();
-
-    const PREROLL = 0.4; // seconds of decoder warm-up before each clip starts recording
-
-    for (let ci = 0; ci < sortedClips.length; ci++) {
-      if (cancelExport) break;
-      const clip = sortedClips[ci];
-
-      setProgress(
-        10 + Math.round((processedDuration / totalDuration) * 83),
-        `Recording clip ${ci + 1} / ${sortedClips.length}`,
-        `${fmt(clip.start)} – ${fmt(clip.end)}`
-      );
-
-      // Seek to pre-roll position so the decoder reaches steady-state before we
-      // start capturing. This eliminates the burst-decode choppiness on clip start.
-      vid.currentTime = Math.max(0, clip.start - PREROLL);
-      await new Promise(res => { vid.onseeked = () => { vid.onseeked = null; res(); }; });
-      if (cancelExport) break;
-
-      // Draw the seek frame so the canvas isn't stale when playback begins
-      ctx.drawImage(vid, 0, 0, width, height);
-
-      let stopDrawing = false;
-      let recordingResumed = false;
-
-      // Resume the recorder exactly when we reach clip.start — by then the
-      // decoder has already been running for PREROLL seconds in steady state.
-      const maybeResume = () => {
-        if (!recordingResumed && vid.currentTime >= clip.start - 0.02) {
-          recorder.resume();
-          recordingResumed = true;
-        }
-      };
-
-      if (useRVFC) {
-        const drawFrame = () => {
-          if (stopDrawing || cancelExport) return;
-          ctx.drawImage(vid, 0, 0, width, height);
-          if (!disableScoreboard) {
-            const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a, undefined, undefined, undefined, watermarkLogo);
-          } else if (watermarkLogo) {
-            wcDrawWatermark(ctx, width, height, watermarkLogo);
-          }
-          maybeResume();
-          vid.requestVideoFrameCallback(drawFrame);
-        };
-        vid.requestVideoFrameCallback(drawFrame);
-      } else {
-        const drawLoop = () => {
-          if (stopDrawing || cancelExport) return;
-          ctx.drawImage(vid, 0, 0, width, height);
-          if (!disableScoreboard) {
-            const { h, a } = wcScoreAt(vid.currentTime);
-            wcDrawActiveScoreboard(ctx, width, height, homeLabel, awayLabel, h, a, undefined, undefined, undefined, watermarkLogo);
-          } else if (watermarkLogo) {
-            wcDrawWatermark(ctx, width, height, watermarkLogo);
-          }
-          maybeResume();
-          requestAnimationFrame(drawLoop);
-        };
-        requestAnimationFrame(drawLoop);
-      }
-
-      vid.play();
-      await new Promise(res => {
-        const onTime = () => {
-          maybeResume(); // belt-and-suspenders if rVFC/rAF hasn't fired yet
-          if (vid.currentTime >= clip.end - 0.04 || cancelExport) {
-            vid.removeEventListener('timeupdate', onTime);
-            vid.removeEventListener('ended', onEnd);
-            vid.pause();
-            stopDrawing = true;
-            res();
-          }
-        };
-        const onEnd = () => {
-          vid.removeEventListener('ended', onEnd);
-          vid.removeEventListener('timeupdate', onTime);
-          stopDrawing = true;
-          res();
-        };
-        vid.addEventListener('timeupdate', onTime);
-        vid.addEventListener('ended', onEnd);
-      });
-
-      recorder.pause();
-      processedDuration += (clip.end - clip.start);
-    }
-
-    setProgress(94, 'Finalizing…');
-    await new Promise(res => {
-      recorder.onstop = res;
-      // resume before stop so the recorder isn't stuck in paused state
-      if (recorder.state === 'paused') recorder.resume();
-      recorder.stop();
-    });
-
-    URL.revokeObjectURL(vid.src);
-    document.body.removeChild(vid);
-
-    if (cancelExport) return;
-
-    const blob = new Blob(chunks, { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const base = (videoFile.name || 'export').replace(/\.[^.]+$/, '');
-    a.download = `${base}_highlights.webm`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-
-    document.removeEventListener('visibilitychange', onVisibilityChange);
-
-    setProgress(100, `✓ Exported — ${wcFmtSize(blob.size)}`,
-      `${sortedClips.length} clip${sortedClips.length !== 1 ? 's' : ''} · WebM`);
-    const cancelBtn = $('exp-cancel-btn');
-    if (cancelBtn) { cancelBtn.textContent = 'Done'; cancelBtn.onclick = () => openExport(); }
-    $('exp-bar').style.background = 'var(--serve)';
-    const note = $('exp-note');
-    if (note) note.style.display = 'none';
-    toast('Export complete ✓');
-
-  } catch (err) {
-    trackEvent('mediarecorder_error', { message: err.message });
-    document.removeEventListener('visibilitychange', onVisibilityChange);
-    try { URL.revokeObjectURL(vid.src); document.body.removeChild(vid); } catch (_) {}
-    console.error('MediaRecorder export error:', err);
-    const lbl = $('exp-status');
-    if (lbl) { lbl.style.color = 'var(--danger)'; lbl.textContent = '⚠ ' + err.message; }
-    const cancelBtn = $('exp-cancel-btn');
-    if (cancelBtn) { cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => openExport(); }
-    if (isFileAccessError(err)) showReopenVideoButton();
-  }
 }
 
 // ── Helpers ──────────────────────────────────────────

@@ -502,7 +502,6 @@ function openReview() {
 // ════════════════════════════════════════════════════
 //  EXPORT PANEL
 // ════════════════════════════════════════════════════
-let exportEngine          = 'webcodecs';
 let exportQuality         = 'medium';
 let exportHighlightsOnly  = false;
 let exportDisableScoreboard = false;
@@ -513,13 +512,6 @@ let exportCombined        = false;
 
 const _watermarkImg = new Image();
 _watermarkImg.src = 'img/icon.png';
-
-function selectEngine(e) {
-  exportEngine = e;
-  const wb = $('eng-webcodecs'), mr = $('eng-recorder');
-  if (wb) wb.classList.toggle('active', e === 'webcodecs');
-  if (mr) mr.classList.toggle('active', e === 'recorder');
-}
 
 function calcExportDur() {
   if (exportCombined) {
@@ -661,8 +653,7 @@ function getExportBitrate(w, h, fps) {
 }
 
 function doVideoExport() {
-  if (exportCombined || exportEngine !== 'recorder') doWebCodecsExport();
-  else doMediaRecorderExport();
+  doWebCodecsExport();
 }
 
 function openExport() {
@@ -733,21 +724,12 @@ function openExport() {
       </div>
     </div>
 
-    <div class="export-settings-row">
-      <div class="export-settings-col">
-        <div class="eng-label">Engine</div>
-        <div class="engine-toggle">
-          <button class="eng-btn ${exportEngine === 'webcodecs' ? 'active' : ''}" id="eng-webcodecs" onclick="selectEngine('webcodecs')">WebCodecs</button>
-          <button class="eng-btn ${exportEngine === 'recorder' ? 'active' : ''}" id="eng-recorder" onclick="selectEngine('recorder')">Recorder</button>
-        </div>
-      </div>
-      <div class="export-settings-col">
-        <div class="eng-label">Quality</div>
-        <div class="engine-toggle">
-          <button class="eng-btn ${exportQuality === 'low'    ? 'active' : ''}" id="q-low"    onclick="selectQuality('low')">Low</button>
-          <button class="eng-btn ${exportQuality === 'medium' ? 'active' : ''}" id="q-medium" onclick="selectQuality('medium')">Med</button>
-          <button class="eng-btn ${exportQuality === 'high'   ? 'active' : ''}" id="q-high"   onclick="selectQuality('high')">High</button>
-        </div>
+    <div class="export-settings-col">
+      <div class="eng-label">Quality</div>
+      <div class="engine-toggle">
+        <button class="eng-btn ${exportQuality === 'low'    ? 'active' : ''}" id="q-low"    onclick="selectQuality('low')">Low</button>
+        <button class="eng-btn ${exportQuality === 'medium' ? 'active' : ''}" id="q-medium" onclick="selectQuality('medium')">Med</button>
+        <button class="eng-btn ${exportQuality === 'high'   ? 'active' : ''}" id="q-high"   onclick="selectQuality('high')">High</button>
       </div>
     </div>
 

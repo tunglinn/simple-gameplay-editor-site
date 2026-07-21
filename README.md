@@ -15,9 +15,7 @@ Works on desktop Chrome and Android Chrome. No server, no account, no build step
 - Undo/redo, highlight toggle, clip type editing
 - Marks list panel with seek-to-clip and delete
 - Review panel (plays each clip in sequence with scoreboard overlay)
-- Export pipeline — two engines:
-  - **WebCodecs** (default): frame-accurate, fast, produces MP4 via mp4-muxer; works at 1080p/4K; burns live scoreboard onto each frame
-  - **MediaRecorder** fallback: real-time playback capture into WebM; lower accuracy but broader compatibility
+- Export pipeline — **WebCodecs**: frame-accurate, fast, produces MP4 via mp4-muxer; works at 1080p/4K/4K60; burns live scoreboard onto each frame
 - Export quality selector (low / medium / high bitrate)
 - Cancel mid-export
 - Scoreboard overlay — home/away labels drawn on every exported frame
@@ -25,21 +23,21 @@ Works on desktop Chrome and Android Chrome. No server, no account, no build step
 - Android-specific fixes:
   - Lazy `editorVideo` loading prevents hardware decoder pool exhaustion (the freeze-on-load bug)
   - HEVC (`hvcC`) decoder config support alongside H.264 (`avcC`) — phones often record HEVC
-  - Dynamic H.264 level selection for the encoder (4.0 → 5.0 → 5.1 based on resolution × fps)
+  - Dynamic H.264 level selection for the encoder (4.0 → 5.0 → 5.1 → 5.2 → 6.0 based on resolution × fps)
   - `createImageBitmap` for GPU-resident VideoFrames — fixes the black-screen export bug on Android
   - Blob URL file read at export time — avoids Android's file permission expiry after tab backgrounding
 
 **Test coverage**
 
-- Unit tests (Vitest, Node.js): `fmt`, `fmtDur`, `wcFmtSize`, `wcPickH264Codec`, `wcSerializeAvcC`, `wcSerializeHvcC`, `wcGetSamplesForClip`
+- Unit tests (Vitest, Node.js): `fmt`, `fmtDur`, `wcFmtSize`, `wcPickH264Codec`, `wcSerializeAvcC`, `wcSerializeHvcC`, `wcGetSamplesForClip`, `wcSplitNals`, `wcExtractAvcCFromChunk`, `wcAnnexBToAvcc`
 - E2E tests (Playwright, real Chromium): page load, video load, WebCodecs export produces valid MP4, export shows 100% progress, error on empty clip list, cancel mid-export, exported frames are not all black
 
 ---
 
 ## What still needs work
 
-- **Audio in WebCodecs export**: the WebCodecs path currently drops audio. The MediaRecorder path captures audio from the video element stream. Adding audio to WebCodecs requires decoding audio samples with `AudioDecoder` and muxing them alongside the video with mp4-muxer's audio track — non-trivial but the muxer supports it.
-- **Cross-browser**: WebCodecs is Chrome/Edge only. Safari does not support `VideoEncoder` as of mid-2025. The MediaRecorder fallback covers Firefox and Safari but produces WebM, not MP4, and is real-time (slow for long files).
+- **Cross-browser**: WebCodecs works in Chrome/Edge and in Safari 16.4+ (which covers every iOS browser, since they are all WebKit). Firefox's `VideoEncoder`/`VideoDecoder` support is still maturing. Browsers without WebCodecs get a clear unsupported message instead of an export.
+- **iOS verification**: the iOS-specific paths (just-in-time clip fetching, synthesized avcC when the encoder omits `decoderConfig`, Annex B re-framing, scratch-canvas ImageBitmap fallback) were written from documented WebKit behavior and need confirmation on a real device — BrowserStack or a user's Safari remote-inspector log of the `[WC]` console output would do it.
 - **Session persistence**: clips are held in memory only. Closing the tab loses all marks. LocalStorage or IndexedDB could save/restore the clip list and team names.
 - **Marks import/export**: there is UI scaffolding for importing/exporting marks as JSON (the Import Confirm modal exists) but the file round-trip logic is incomplete.
 - **Service worker cache versioning**: `sw.js` hard-codes `sportmark-v1`. Deploying a new version requires manually bumping the cache name or users may serve stale files.
