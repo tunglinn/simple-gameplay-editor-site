@@ -1006,11 +1006,17 @@ async function doMediaRecorderExport() {
     }
 
     const mimeTypes = [
+      // Safari's MediaRecorder only supports MP4/H.264 output, not WebM — try
+      // these first so iOS/Safari picks one of them before falling through.
+      'video/mp4;codecs=avc1.640028',
+      'video/mp4',
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
       'video/webm',
     ];
     const mimeType = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+    const fileExt = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+    const formatLabel = fileExt.toUpperCase();
     const bitrate = getExportBitrate(width, height, fps);
     const recorder = new MediaRecorder(canvasStream, {
       mimeType,
@@ -1140,7 +1146,7 @@ async function doMediaRecorderExport() {
     const a = document.createElement('a');
     a.href = url;
     const base = (videoFile.name || 'export').replace(/\.[^.]+$/, '');
-    a.download = `${base}_highlights.webm`;
+    a.download = `${base}_highlights.${fileExt}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1149,7 +1155,7 @@ async function doMediaRecorderExport() {
     document.removeEventListener('visibilitychange', onVisibilityChange);
 
     setProgress(100, `✓ Exported — ${wcFmtSize(blob.size)}`,
-      `${sortedClips.length} clip${sortedClips.length !== 1 ? 's' : ''} · WebM`);
+      `${sortedClips.length} clip${sortedClips.length !== 1 ? 's' : ''} · ${formatLabel}`);
     const cancelBtn = $('exp-cancel-btn');
     if (cancelBtn) { cancelBtn.textContent = 'Done'; cancelBtn.onclick = () => openExport(); }
     $('exp-bar').style.background = 'var(--serve)';
