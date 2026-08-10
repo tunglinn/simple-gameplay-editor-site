@@ -502,7 +502,10 @@ function openReview() {
 // ════════════════════════════════════════════════════
 //  EXPORT PANEL
 // ════════════════════════════════════════════════════
-let exportEngine          = 'webcodecs';
+// WebCodecs (VideoEncoder/VideoDecoder) isn't implemented by WebKit, so every
+// iOS browser (Safari, and Chrome/Firefox on iOS, which are WebKit under the
+// hood) needs to default to the MediaRecorder engine instead.
+let exportEngine = ('VideoEncoder' in window && 'VideoDecoder' in window) ? 'webcodecs' : 'recorder';
 let exportQuality         = 'medium';
 let exportHighlightsOnly  = false;
 let exportDisableScoreboard = false;
